@@ -1,0 +1,42 @@
+# Weights and Biases Configuration
+
+wandb:
+  enabled: false
+  project: "r3-mm-pipeline"
+  entity: null  # Set via environment or config
+
+  experiment:
+    name: null  # Auto-generated if null
+    tags:
+      - "multiple-myeloma"
+      - "single-cell"
+      - "scRNA-seq"
+    notes: "Multiple Myeloma single-cell computational biology pipeline"
+    group: "production"
+
+  logging:
+    log_frequency: 10
+    log_histograms: true
+    log_model_checkpoints: true
+    log_system_metrics: true
+
+  hyperparameter_sweep:
+    enabled: false
+    method: "bayes"
+    metric:
+      name: "silhouette_score"
+      goal: "maximize"
+    parameters:
+      max_mito_pct:
+        distribution: "uniform"
+        min: 5
+        max: 40
+      leiden_resolution:
+        distribution: "uniform"
+        min: 0.3
+        max: 2.0
+
+  alerts:
+    enabled: false
+    loss_threshold: 0.5
+    email: null

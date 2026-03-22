@@ -1,0 +1,39 @@
+# MLflow Configuration for Experiment Tracking
+
+mlflow:
+  backend:
+    store_uri: "file:./mlruns"
+    artifact_uri: "./mlruns/artifacts"
+
+  server:
+    host: "127.0.0.1"
+    port: 5000
+    workers: 4
+
+  registry:
+    model_registry_uri: "file:./mlruns"
+
+  experiment:
+    name: "r3-mm-pipeline"
+    tags:
+      team: "computational-biology"
+      project: "r3-mm"
+      environment: "production"
+
+  run:
+    tags:
+      pipeline_version: "0.1.0"
+      organism: "Homo sapiens"
+    params:
+      track_frequency: 10
+
+  logging:
+    level: "INFO"
+    format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+  models:
+    register_best_model: true
+    metric_name: "silhouette_score"
+    metric_direction: "maximize"
+    staging_transition: true
+    production_transition: false

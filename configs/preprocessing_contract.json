@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "created_at": "2026-03-18",
+  "description": "Frozen preprocessing contract for agentic hyperparameter tuning",
+  "qc_params": {
+    "min_genes": 200,
+    "max_genes": 5000,
+    "max_mito_pct": 20,
+    "min_cells": 3,
+    "description": "QC parameters are frozen; agents cannot modify data filtering"
+  },
+  "normalization": "scanpy_log",
+  "normalization_description": "Log normalization via scanpy.preprocessing.log1p; cannot change",
+  "n_hvg": 2000,
+  "hvg_description": "2000 highly variable genes selected; frozen count",
+  "doublet_method": "scrublet",
+  "doublet_description": "Doublet removal via Scrublet; frozen method",
+  "ambient_method": "decontx",
+  "ambient_description": "Ambient RNA removal via decontX; frozen method",
+  "frozen_modules": [
+    "preprocessing.qc",
+    "preprocessing.doublet_removal",
+    "preprocessing.ambient_rna",
+    "preprocessing.normalization",
+    "data.download",
+    "data.storage"
+  ],
+  "frozen_modules_description": "These modules cannot be edited during agentic search",
+  "data_hash": null,
+  "data_hash_description": "Will be computed when data is loaded; used for integrity verification",
+  "constraints": {
+    "no_raw_data_access": true,
+    "no_preprocessing_changes": true,
+    "no_doublet_rescan": true,
+    "no_hvg_recalculation": true,
+    "description": "Agents work only with preprocessed, frozen data"
+  }
+}

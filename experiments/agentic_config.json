@@ -1,0 +1,22 @@
+{
+  "optimization_metric": "silhouette_score",
+  "optimization_direction": "maximize",
+  "search_budget": 100,
+  "early_stopping_patience": 10,
+  "trial_timeout_seconds": 3600,
+  "max_wallclock_hours": 24.0,
+  "editable_surface": [
+    "qc.max_mito_pct",
+    "clustering.leiden.resolution",
+    "integration.methods.harmony.theta",
+    "preprocessing.hvg_selection.n_top_genes",
+    "annotation.methods.celltypist.over_clustering"
+  ],
+  "frozen_modules": [
+    "download",
+    "storage",
+    "logging"
+  ],
+  "preprocessing_contract_path": null,
+  "experiment_log_dir": "experiments/"
+}

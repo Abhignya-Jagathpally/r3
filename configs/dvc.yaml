@@ -1,0 +1,110 @@
+# DVC Pipeline Configuration
+# Defines reproducible stages for the computational pipeline
+
+stages:
+  download:
+    cmd: python -m src.data.download
+    deps:
+      - src/data/download.py
+      - configs/pipeline_config.yaml
+    outs:
+      - data/raw:
+          cache: true
+    params:
+      - data_sources.datasets
+      - data_sources.download
+    plots:
+      - plots/download_summary.json:
+          x: step
+          y: cell_count
+
+  qc:
+    cmd: python -m src.preprocessing.qc
+    deps:
+      - data/raw
+      - src/preprocessing
+      - configs/pipeline_config.yaml
+    outs:
+      - data/standardized:
+          cache: true
+    params:
+      - qc
+    metrics:
+      - metrics/qc_metrics.json:
+          cache: false
+    plots:
+      - plots/qc_violin.json:
+          x: metric
+          y: value
+
+  integration:
+    cmd: python -m src.integration.integrate
+    deps:
+      - data/standardized
+      - src/integration
+      - configs/pipeline_config.yaml
+    outs:
+      - data/analysis_ready:
+          cache: true
+    params:
+      - integration
+      - preprocessing
+    metrics:
+      - metrics/integration_metrics.json:
+          cache: false
+    plots:
+      - plots/umap_integration.html
+
+  annotation:
+    cmd: python -m src.annotation.annotate
+    deps:
+      - data/analysis_ready
+      - src/annotation
+      - configs/pipeline_config.yaml
+    outs:
+      - results/annotation:
+          cache: true
+    params:
+      - annotation
+    metrics:
+      - metrics/annotation_metrics.json:
+          cache: false
+    plots:
+      - plots/cell_type_distribution.json
+
+  evaluation:
+    cmd: python -m src.evaluation.evaluate
+    deps:
+      - data/analysis_ready
+      - results/annotation
+      - src/evaluation
+      - configs/pipeline_config.yaml
+    metrics:
+      - metrics/evaluation_metrics.json:
+          cache: false
+    plots:
+      - plots/clustering_metrics.json
+      - plots/batch_correction.json
+      - plots/annotation_confusion.json
+
+  pseudobulk:
+    cmd: python -m src.evaluation.pseudobulk
+    deps:
+      - data/analysis_ready
+      - results/annotation
+      - src/evaluation
+      - configs/pipeline_config.yaml
+    outs:
+      - results/pseudobulk:
+          cache: true
+    metrics:
+      - metrics/pseudobulk_summary.json:
+          cache: false
+
+plots:
+  - plots/qc_violin.json
+  - plots/umap_integration.html
+  - plots/cell_type_distribution.json
+  - plots/clustering_metrics.json
+  - plots/batch_correction.json
+  - plots/annotation_confusion.json

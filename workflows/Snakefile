@@ -1,0 +1,270 @@
+"""
+R3-MM Pipeline: Multiple Myeloma Single-Cell Computational Biology
+Snakemake workflow
+"""
+
+import os
+import yaml
+from pathlib import Path
+
+# Configuration
+CONFIG_FILE = config.get("config_file", "configs/pipeline_config.yaml")
+OUTPUT_DIR = config.get("output_dir", "results")
+DATA_DIR = config.get("data_dir", "data")
+
+# Load pipeline configuration
+with open(CONFIG_FILE, "r") as f:
+    pipeline_config = yaml.safe_load(f)
+
+# Extract dataset accessions
+ACCESSIONS = [
+    d["accession"] for d in pipeline_config["data_sources"]["datasets"]
+]
+
+# Directories
+RAW_DATA = os.path.join(DATA_DIR, "raw")
+STANDARDIZED_DATA = os.path.join(DATA_DIR, "standardized")
+ANALYSIS_READY_DATA = os.path.join(DATA_DIR, "analysis_ready")
+RESULTS_DIR = OUTPUT_DIR
+
+os.makedirs(RAW_DATA, exist_ok=True)
+os.makedirs(STANDARDIZED_DATA, exist_ok=True)
+os.makedirs(ANALYSIS_READY_DATA, exist_ok=True)
+os.makedirs(RESULTS_DIR, exist_ok=True)
+
+
+# Rules
+rule all:
+    """Target rule: all outputs"""
+    input:
+        qc_metrics = expand(
+            os.path.join(STANDARDIZED_DATA, "{accession}_qc.done"),
+            accession=ACCESSIONS,
+        ),
+        integration_done = os.path.join(ANALYSIS_READY_DATA, "integration.done"),
+        annotation_done = os.path.join(RESULTS_DIR, "annotation", "annotation.done"),
+        evaluation_done = os.path.join(RESULTS_DIR, "evaluation", "evaluation.done"),
+        pseudobulk_done = os.path.join(RESULTS_DIR, "pseudobulk", "pseudobulk.done"),
+
+
+rule download:
+    """Download data from GEO"""
+    output:
+        data = os.path.join(RAW_DATA, "{accession}.h5ad"),
+        metrics = os.path.join(RAW_DATA, "{accession}_metrics.json"),
+    params:
+        accession = "{accession}",
+        config = CONFIG_FILE,
+    log:
+        "logs/{accession}_download.log",
+    resources:
+        mem_mb = 16000,
+        cpus = 4,
+        runtime = 240,
+    shell:
+        """
+        python -m src.data.download \
+            --accession {params.accession} \
+            --config {params.config} \
+            --output {output.data} \
+            --metrics {output.metrics} \
+            2>&1 | tee {log}
+        """
+
+
+rule qc:
+    """Quality control and preprocessing"""
+    input:
+        data = os.path.join(RAW_DATA, "{accession}.h5ad"),
+    output:
+        data = os.path.join(STANDARDIZED_DATA, "{accession}.h5ad"),
+        metrics = os.path.join(STANDARDIZED_DATA, "{accession}_qc.json"),
+        done = os.path.join(STANDARDIZED_DATA, "{accession}_qc.done"),
+    params:
+        accession = "{accession}",
+        config = CONFIG_FILE,
+    log:
+        "logs/{accession}_qc.log",
+    resources:
+        mem_mb = 32000,
+        cpus = 8,
+        runtime = 480,
+    shell:
+        """
+        python -m src.preprocessing.qc \
+            --input {input.data} \
+            --output {output.data} \
+            --config {params.config} \
+            --metrics {output.metrics} \
+            2>&1 | tee {log}
+        touch {output.done}
+        """
+
+
+rule integrate:
+    """Batch effect correction and integration"""
+    input:
+        expand(
+            os.path.join(STANDARDIZED_DATA, "{accession}.h5ad"),
+            accession=ACCESSIONS,
+        ),
+    output:
+        data = os.path.join(ANALYSIS_READY_DATA, "integrated.h5ad"),
+        metrics = os.path.join(ANALYSIS_READY_DATA, "integration_metrics.json"),
+        done = os.path.join(ANALYSIS_READY_DATA, "integration.done"),
+    params:
+        config = CONFIG_FILE,
+        output_dir = ANALYSIS_READY_DATA,
+    log:
+        "logs/integration.log",
+    resources:
+        mem_mb = 64000,
+        cpus = 16,
+        runtime = 720,
+    shell:
+        """
+        python -m src.integration.integrate \
+            --input_dir {params.standardized_data} \
+            --output {output.data} \
+            --config {params.config} \
+            --metrics {output.metrics} \
+            2>&1 | tee {log}
+        touch {output.done}
+        """
+
+
+rule annotate:
+    """Cell type annotation"""
+    input:
+        data = os.path.join(ANALYSIS_READY_DATA, "integrated.h5ad"),
+    output:
+        data = os.path.join(RESULTS_DIR, "annotation", "annotated.h5ad"),
+        annotations = os.path.join(RESULTS_DIR, "annotation", "celltypes.csv"),
+        done = os.path.join(RESULTS_DIR, "annotation", "annotation.done"),
+    params:
+        config = CONFIG_FILE,
+        output_dir = os.path.join(RESULTS_DIR, "annotation"),
+    log:
+        "logs/annotation.log",
+    resources:
+        mem_mb = 64000,
+        cpus = 16,
+        runtime = 720,
+    shell:
+        """
+        mkdir -p {params.output_dir}
+        python -m src.annotation.annotate \
+            --input {input.data} \
+            --output {output.data} \
+            --annotations {output.annotations} \
+            --config {params.config} \
+            2>&1 | tee {log}
+        touch {output.done}
+        """
+
+
+rule evaluate:
+    """Evaluation of clustering and annotation"""
+    input:
+        data = os.path.join(ANALYSIS_READY_DATA, "integrated.h5ad"),
+        annotations = os.path.join(RESULTS_DIR, "annotation", "celltypes.csv"),
+    output:
+        metrics = os.path.join(RESULTS_DIR, "evaluation", "metrics.json"),
+        plots = directory(os.path.join(RESULTS_DIR, "evaluation", "plots")),
+        done = os.path.join(RESULTS_DIR, "evaluation", "evaluation.done"),
+    params:
+        config = CONFIG_FILE,
+        output_dir = os.path.join(RESULTS_DIR, "evaluation"),
+    log:
+        "logs/evaluation.log",
+    resources:
+        mem_mb = 32000,
+        cpus = 8,
+        runtime = 240,
+    shell:
+        """
+        mkdir -p {params.output_dir} {output.plots}
+        python -m src.evaluation.evaluate \
+            --input {input.data} \
+            --annotations {input.annotations} \
+            --output {output.metrics} \
+            --config {params.config} \
+            --plot_dir {output.plots} \
+            2>&1 | tee {log}
+        touch {output.done}
+        """
+
+
+rule pseudobulk:
+    """Pseudobulk analysis"""
+    input:
+        data = os.path.join(ANALYSIS_READY_DATA, "integrated.h5ad"),
+        annotations = os.path.join(RESULTS_DIR, "annotation", "celltypes.csv"),
+    output:
+        data = os.path.join(RESULTS_DIR, "pseudobulk", "pseudobulk.csv"),
+        metrics = os.path.join(RESULTS_DIR, "pseudobulk", "summary.json"),
+        done = os.path.join(RESULTS_DIR, "pseudobulk", "pseudobulk.done"),
+    params:
+        config = CONFIG_FILE,
+        output_dir = os.path.join(RESULTS_DIR, "pseudobulk"),
+    log:
+        "logs/pseudobulk.log",
+    resources:
+        mem_mb = 32000,
+        cpus = 8,
+        runtime = 240,
+    shell:
+        """
+        mkdir -p {params.output_dir}
+        python -m src.evaluation.pseudobulk \
+            --input {input.data} \
+            --annotations {input.annotations} \
+            --output {output.data} \
+            --config {params.config} \
+            --metrics {output.metrics} \
+            2>&1 | tee {log}
+        touch {output.done}
+        """
+
+
+# Utility rules
+rule clean:
+    """Remove all generated files"""
+    shell:
+        """
+        rm -rf {RESULTS_DIR}
+        rm -rf {STANDARDIZED_DATA}
+        rm -rf {ANALYSIS_READY_DATA}
+        rm -rf logs
+        echo "Cleanup complete"
+        """
+
+
+rule clean_all:
+    """Remove all generated files including raw data"""
+    shell:
+        """
+        rm -rf {DATA_DIR}
+        rm -rf {RESULTS_DIR}
+        rm -rf logs
+        echo "Full cleanup complete"
+        """
+
+
+# Utility targets
+rule download_all:
+    """Download all datasets"""
+    input:
+        expand(
+            os.path.join(RAW_DATA, "{accession}.h5ad"),
+            accession=ACCESSIONS,
+        ),
+
+
+rule qc_all:
+    """Run QC on all datasets"""
+    input:
+        expand(
+            os.path.join(STANDARDIZED_DATA, "{accession}.h5ad"),
+            accession=ACCESSIONS,
+        ),

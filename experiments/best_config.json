@@ -1,0 +1,18 @@
+{
+  "model_type": "classical",
+  "n_latent": 10,
+  "n_hidden": 116,
+  "n_layers": 2,
+  "learning_rate": 0.004865086919700199,
+  "dropout_rate": 0.05491959212470011,
+  "gene_likelihood": "nb",
+  "svm_C": 0.027493246520895877,
+  "rf_n_estimators": 250,
+  "rf_max_depth": 23,
+  "integration_method": "scvi",
+  "hvg_count": 3476,
+  "fusion_method": "moe",
+  "fusion_hidden_dim": 500,
+  "batch_size": 32,
+  "n_epochs": 69
+}

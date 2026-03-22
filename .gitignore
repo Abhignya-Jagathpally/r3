@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+bin/
+lib/
+lib64
+include/
+pyvenv.cfg
+share/
+
+# Data files (large)
+data/raw/*.h5ad
+data/raw/*.h5
+data/raw/*.gz
+data/raw/*.tar
+data/standardized/
+data/analysis_ready/
+
+# Checkpoints (large)
+checkpoints/
+dvc-storage/
+
+# GEO downloads
+GSE*_family.soft.gz
+
+# Experiment tracking
+mlruns/
+wandb/
+
+# Logs
+logs/
+*.log
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+htmlcov/
+.coverage
+
+# Misc
+.env
+*.pyc

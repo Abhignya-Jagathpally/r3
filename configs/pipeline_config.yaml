@@ -1,0 +1,280 @@
+# R3-MM Pipeline Configuration
+# Complete configuration for Multiple Myeloma single-cell RNA-seq analysis
+
+pipeline:
+  name: "r3-mm-pipeline"
+  version: "0.1.0"
+  description: "Multiple Myeloma single-cell computational biology pipeline"
+  environment: "production"
+  random_seed: 42
+
+# Data sources
+data_sources:
+  datasets:
+    - accession: "GSE271107"
+      name: "Multiple Myeloma Longitudinal"
+      description: "Longitudinal single-cell transcriptomics of multiple myeloma"
+      organism: "Homo sapiens"
+      tissue: "Bone Marrow"
+      cell_count_expected: 150000
+      platform: "10x Genomics"
+
+    - accession: "GSE106218"
+      name: "Multiple Myeloma Atlas"
+      description: "Single-cell RNA-seq atlas of multiple myeloma"
+      organism: "Homo sapiens"
+      tissue: "Bone Marrow"
+      cell_count_expected: 100000
+      platform: "10x Genomics"
+
+  download:
+    method: "GEO"
+    ncbi_api_key: null  # Set via environment variable
+    timeout_seconds: 300
+    retry_attempts: 3
+    batch_size: 32
+
+# Quality Control Parameters
+qc:
+  min_genes: 200
+  max_genes: 5000
+  min_cells: 3
+  max_mito_pct: 20
+  max_ribo_pct: 50
+  min_genes_per_cell: 200
+  min_umis_per_cell: 500
+  outlier_detection: "mad"  # mad or iqr
+  mad_threshold: 3.0
+
+  # Ambient RNA removal
+  ambient_removal:
+    enabled: true
+    method: "cellbender"
+    expected_cell_count: 5000
+    total_droplets_included: 25000
+
+# Preprocessing Parameters
+preprocessing:
+  normalization:
+    method: "log_normalize"
+    target_sum: 10000.0
+
+  hvg_selection:
+    n_top_genes: 5000
+    flavor: "seurat_v3"
+    span: 0.3
+
+  scale:
+    zero_center: true
+    max_value: null
+    with_mean: true
+    with_std: true
+
+# Integration Methods
+integration:
+  enabled: true
+  methods:
+    - name: "harmony"
+      batch_key: "dataset"
+      theta: 2.0
+      lambda: 1.0
+      sigma: 0.1
+      npcs: 30
+      max_iter_harmony: 10
+
+    - name: "scvi"
+      n_latent: 32
+      dispersion: "gene-batch"
+      gene_likelihood: "nb"
+      use_layer: null
+
+# Annotation Parameters
+annotation:
+  methods:
+    - name: "celltypist"
+      model: "Immune_All_Low.pkl"
+      majority_voting: true
+      over_clustering: true
+
+    - name: "scgpt"
+      model_path: "scGPT_human"
+      n_output_genes: 2000
+      batch_size: 64
+      use_batch_correction: true
+
+  cell_type_markers:
+    PC:
+      - "TNFRSF17"
+      - "SDC1"
+      - "XBP1"
+      - "PRDM1"
+      - "IRF4"
+    T_cell:
+      - "CD3D"
+      - "CD3E"
+      - "CD3G"
+      - "TRAC"
+      - "TRBC1"
+    NK_cell:
+      - "NKG7"
+      - "GNLY"
+      - "FGFBP2"
+      - "GZMA"
+      - "GZMB"
+    B_cell:
+      - "CD19"
+      - "CD79A"
+      - "CD79B"
+      - "MS4A1"
+    Monocyte:
+      - "LYZ"
+      - "S100A8"
+      - "S100A9"
+      - "CD14"
+      - "FCGR3A"
+    Macrophage:
+      - "MACROPHAGE_MARKERS"
+      - "CD68"
+      - "CD163"
+      - "MRC1"
+    Fibroblast:
+      - "COL1A1"
+      - "COL1A2"
+      - "DCN"
+      - "FN1"
+
+# Clustering Parameters
+clustering:
+  pca:
+    n_comps: 50
+    svd_solver: "auto"
+
+  umap:
+    n_neighbors: 15
+    min_dist: 0.1
+    metric: "euclidean"
+
+  leiden:
+    resolution: [0.5, 1.0, 1.5]
+    random_state: 42
+    n_iterations: -1
+
+# Evaluation Metrics
+evaluation:
+  metrics:
+    - "silhouette_score"
+    - "davies_bouldin_index"
+    - "calinski_harabasz_index"
+    - "nmi"
+    - "ari"
+
+  batch_correction_metrics:
+    - "kbet"
+    - "ilisi"
+    - "elbisi"
+    - "lisi"
+
+  annotation_metrics:
+    - "f1_score"
+    - "balanced_accuracy"
+    - "confusion_matrix"
+
+# Pseudobulk Analysis
+pseudobulk:
+  grouping_variables: ["cell_type", "dataset"]
+  min_cells_per_group: 10
+  assay: "counts"
+  aggregation_method: "sum"
+
+# Differential Expression
+differential_expression:
+  methods:
+    - name: "wilcoxon"
+      use_raw: true
+
+    - name: "deseq2"
+      use_raw: true
+
+    - name: "muscat"
+      method: "edgeR"
+
+# Agentic Tuning Parameters
+agentic:
+  enabled: true
+  search_budget: 100  # Total parameter configurations to search
+  editable_surface:
+    - "qc.max_mito_pct"
+    - "clustering.leiden.resolution"
+    - "integration.methods.harmony.theta"
+    - "preprocessing.hvg_selection.n_top_genes"
+    - "annotation.methods.celltypist.over_clustering"
+  frozen_modules:
+    - "download"
+    - "storage"
+    - "logging"
+  optimization_metric: "silhouette_score"
+  optimization_direction: "maximize"
+  early_stopping_patience: 10
+  trial_timeout_seconds: 3600
+
+# Experiment Tracking
+mlflow:
+  enabled: true
+  tracking_uri: "file:./mlruns"
+  experiment_name: "r3-mm-pipeline"
+  run_name: null  # Auto-generated if null
+  tags:
+    environment: "production"
+    project: "r3-mm"
+  params_log_frequency: 10
+
+wandb:
+  enabled: false
+  project: "r3-mm-pipeline"
+  entity: "your-wandb-username"
+  tags: ["multiple-myeloma", "single-cell"]
+  notes: "MM single-cell computational biology pipeline"
+
+dvc:
+  enabled: true
+  remote_storage: "./dvc-storage"
+  auto_push: false
+
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/pipeline.log"
+  console_output: true
+
+# Compute Resources
+compute:
+  n_jobs: -1  # Use all available cores
+  gpu_enabled: true
+  gpu_device: 0
+  batch_size: 32
+  num_workers: 4
+  pin_memory: true
+
+# File Paths
+paths:
+  data_root: "./data"
+  raw_data: "./data/raw"
+  standardized_data: "./data/standardized"
+  analysis_ready_data: "./data/analysis_ready"
+  results: "./results"
+  logs: "./logs"
+  checkpoints: "./checkpoints"
+  configs: "./configs"
+
+# Output Settings
+output:
+  formats:
+    - "h5ad"
+    - "parquet"
+    - "zarr"
+  compression: "gzip"
+  level: 9
+  include_metadata: true
+  save_raw_counts: true
+  save_logs: true

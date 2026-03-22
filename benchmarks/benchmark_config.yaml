@@ -1,0 +1,201 @@
+# MM-SingleCell-Benchmark Configuration
+# Defines comprehensive benchmarking tasks for Multiple Myeloma single-cell analysis
+
+benchmark_name: "MM-SingleCell-Benchmark-v1"
+description: "Comprehensive benchmark suite for MM scRNA-seq analysis with annotation, integration, and transfer tasks"
+
+# Data configuration
+data:
+  datasets:
+    - name: "GSE271107"
+      description: "Primary MM dataset"
+      n_cells_expected: 150000
+      n_genes: 33694
+
+    - name: "GSE106218"
+      description: "External validation dataset"
+      n_cells_expected: 80000
+      n_genes: 33694
+
+# Task 1: Cell Type Annotation
+annotation:
+  enabled: true
+  metrics:
+    - ari
+    - nmi
+    - rare_cell_recall
+  primary_metric: "ari"
+  secondary_metrics:
+    - nmi
+  weights:
+    ari: 0.5
+    nmi: 0.5
+
+  # Rare cell types to track
+  rare_types:
+    - osteoclast
+    - mast_cell
+    - hsc_progenitor
+    - plasma_cell
+    - megakaryocyte_progenitor
+
+  rare_type_frequency_threshold: 0.01  # 1% frequency threshold
+
+  # Expected baseline performance
+  expected_baseline_ari: 0.65
+  expected_foundation_ari: 0.85
+
+# Task 2: Batch Integration
+integration:
+  enabled: true
+  metrics:
+    - batch_asw
+    - graph_connectivity
+    - bio_conservation
+  primary_metric: "bio_conservation"
+  secondary_metrics:
+    - graph_connectivity
+    - batch_asw
+  weights:
+    batch_asw: 0.333
+    graph_connectivity: 0.333
+    bio_conservation: 0.334
+
+  # ASW interpretation
+  asw_thresholds:
+    poor: -0.25
+    fair: 0.0
+    good: 0.25
+    excellent: 0.5
+
+  # Expected baseline performance
+  expected_baseline_bio_conservation: 0.60
+  expected_foundation_bio_conservation: 0.80
+
+# Task 3: Cross-Dataset Transfer
+transfer:
+  enabled: true
+  metrics:
+    - transfer_score
+  primary_metric: "transfer_score"
+
+  # Transfer learning setup
+  train_study: "GSE271107"
+  test_studies:
+    - "GSE106218"
+    # Can add more external validation sets
+
+  # Expected performance
+  expected_baseline_accuracy: 0.65
+  expected_foundation_accuracy: 0.80
+
+# Data splitting strategy
+splits:
+  strategy: "patient_level"  # or "cell_level", "time_aware"
+  test_size: 0.2
+  n_folds: 5
+  stratify_by: "disease_stage"  # or null
+
+  # Patient-level splitting ensures no information leakage
+  patient_level_requirements:
+    - "no_same_patient_in_train_test"
+    - "preprocessing_fit_on_train_only"
+    - "hvg_selection_on_train_only"
+
+# Models to benchmark
+models:
+  baselines:
+    - name: "LogisticRegression"
+      type: "classical"
+      hyperparams:
+        max_iter: 1000
+        solver: "lbfgs"
+
+    - name: "RandomForest"
+      type: "classical"
+      hyperparams:
+        n_estimators: 100
+        max_depth: null
+
+    - name: "SVM"
+      type: "classical"
+      hyperparams:
+        C: 1.0
+        kernel: "rbf"
+
+    - name: "ClassicalEnsemble"
+      type: "classical"
+      hyperparams:
+        voting: "majority"
+
+  foundation:
+    - name: "scGPT"
+      type: "foundation"
+      hyperparams:
+        n_hvg: 3000
+        n_bins: 51
+        n_epochs: 10
+        learning_rate: 1e-4
+        batch_size: 64
+
+  fusion:
+    - name: "MultimodalFusion-Concat"
+      type: "fusion"
+      hyperparams:
+        method: "concat"
+
+    - name: "MultimodalFusion-Attention"
+      type: "fusion"
+      hyperparams:
+        method: "attention"
+
+    - name: "MultimodalFusion-MoE"
+      type: "fusion"
+      hyperparams:
+        method: "moe"
+
+# Preprocessing pipeline
+preprocessing:
+  quality_control:
+    enabled: true
+    min_genes_per_cell: 200
+    max_genes_per_cell: 7000
+    min_cells_per_gene: 3
+    max_mt_pct: 20
+
+  normalization:
+    method: "log_normalize"
+    scale_factor: 1e4
+
+  hvg_selection:
+    enabled: true
+    n_hvg: 3000
+    flavor: "seurat"
+
+  reduction:
+    pca:
+      n_comps: 50
+    umap:
+      n_neighbors: 15
+      min_dist: 0.1
+
+# Logging and tracking
+tracking:
+  backend: "mlflow"  # or "wandb"
+  experiment_name: "mm-single-cell-benchmark"
+  tracking_uri: null  # Use default local MLflow if null
+  save_models: true
+  save_predictions: true
+
+# Output configuration
+output:
+  results_dir: "./results/benchmarks"
+  leaderboard_name: "MM-Benchmark-Leaderboard.csv"
+  save_metrics_history: true
+  plot_comparisons: true
+
+# Reproducibility
+reproducibility:
+  random_seed: 42
+  n_runs: 3  # Average results over multiple runs
+  set_deterministic: true
