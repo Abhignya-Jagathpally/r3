@@ -34,25 +34,16 @@ class ContractEnforcer:
         contract_path: Path to contract file
     """
 
-    def __init__(self, contract_path_or_frozen_modules=None):
+    def __init__(self, contract_path: Optional[str] = None):
         """Initialize contract enforcer.
 
         Args:
-            contract_path_or_frozen_modules: Either a path to preprocessing
-                contract JSON file, or a list of frozen module names.
+            contract_path: Path to preprocessing contract JSON file.
         """
+        self.contract_path = contract_path
         self.contract = None
-        self.frozen_modules = []
-        if isinstance(contract_path_or_frozen_modules, list):
-            self.frozen_modules = contract_path_or_frozen_modules
-            self.contract_path = None
-        else:
-            self.contract_path = contract_path_or_frozen_modules
-            if self.contract_path:
-                try:
-                    self.load_contract(self.contract_path)
-                except FileNotFoundError:
-                    logger.warning(f"Contract file not found: {self.contract_path}")
+        if contract_path:
+            self.load_contract(contract_path)
 
     def load_contract(self, contract_path: str) -> Dict:
         """Load frozen preprocessing contract from JSON.
@@ -163,6 +154,22 @@ class ContractEnforcer:
                 logger.warning(
                     f"HVG count {n_var} differs from contract {n_hvg}"
                 )
+
+        # Verify data integrity with hash
+        current_hash = self._compute_data_hash(adata)
+        stored_hash = contract.get("data_hash")
+        if stored_hash and current_hash != stored_hash:
+            errors.append(
+                f"Data hash mismatch: {current_hash} vs contract {stored_hash}. "
+                f"Preprocessed data has been modified."
+            )
+
+        # Check dtype consistency
+        expected_dtype = contract.get("x_dtype")
+        if expected_dtype and str(adata.X.dtype) != expected_dtype:
+            logger.warning(
+                f"Data dtype {adata.X.dtype} differs from contract {expected_dtype}"
+            )
 
         is_valid = len(errors) == 0
         error_msg = "; ".join(errors) if errors else None

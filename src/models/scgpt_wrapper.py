@@ -110,6 +110,7 @@ class ScGPTModel:
         self._hvg_list = None
         self._fitted_scaler = None
         self._is_fine_tuned = False
+        self.is_mock = False
 
         np.random.seed(seed)
         torch.manual_seed(seed)
@@ -123,19 +124,42 @@ class ScGPTModel:
         Load pretrained scGPT model from disk.
 
         This is a lazy-load operation to avoid unnecessary memory usage.
+        Attempts to load real checkpoint, falls back to mock if unavailable.
         """
         if self.model is not None:
             return
 
         logger.info(f"Loading pretrained model from {self.model_dir}")
 
-        # Placeholder: In production, load actual scGPT checkpoint
-        # For now, initialize a minimal transformer model
+        # Try to import scgpt and load real model
         try:
-            # This would load: torch.load(self.model_dir / "model.pt")
+            import scgpt
+
+            checkpoint_path = self.model_dir / "model.pt"
+            if not checkpoint_path.exists():
+                logger.warning(
+                    f"scGPT checkpoint not found at {checkpoint_path}. "
+                    "Falling back to mock model."
+                )
+                self._initialize_mock_model()
+            else:
+                # Load real scGPT model
+                self.model = torch.load(checkpoint_path, map_location=self.config.device)
+                self.is_mock = False
+                logger.info(f"Successfully loaded pretrained scGPT model from {checkpoint_path}")
+
+        except ImportError:
+            logger.warning(
+                "scGPT package is not installed. "
+                "Install with: pip install scgpt. "
+                "Falling back to mock model."
+            )
             self._initialize_mock_model()
         except Exception as e:
-            logger.warning(f"Could not load model checkpoint: {e}. Using mock model.")
+            logger.warning(
+                f"Failed to load scGPT checkpoint: {e}. "
+                "Falling back to mock model."
+            )
             self._initialize_mock_model()
 
     def _initialize_mock_model(self) -> None:
@@ -148,7 +172,10 @@ class ScGPTModel:
             nn.Linear(self.config.hidden_size, self.config.hidden_size),
         )
         self.model = self.model.to(self.config.device)
-        logger.warning("Using mock model for development purposes")
+        self.is_mock = True
+        logger.warning(
+            "WARNING: Using mock model — results are not from pretrained scGPT"
+        )
 
     def preprocess_for_scgpt(
         self, adata: AnnData, use_raw: bool = True
@@ -209,12 +236,13 @@ class ScGPTModel:
         logger.info(f"Preprocessed {adata.n_obs} cells x {adata.n_vars} genes")
         return adata
 
-    def encode(self, adata: AnnData) -> np.ndarray:
+    def encode(self, adata: AnnData, batch_size: int = 512) -> np.ndarray:
         """
         Encode cells to latent representations using pretrained scGPT.
 
         Args:
             adata: Preprocessed AnnData object (from preprocess_for_scgpt).
+            batch_size: Batch size for processing to avoid memory explosion. Default: 512.
 
         Returns:
             Cell embeddings of shape (n_cells, hidden_size).
@@ -222,6 +250,9 @@ class ScGPTModel:
         Raises:
             ValueError: If adata is not preprocessed correctly.
         """
+        if self.is_mock:
+            logger.warning("WARNING: Using mock model — results are not from pretrained scGPT")
+
         if adata.n_vars != self.config.n_hvg and self._hvg_list is None:
             logger.warning(
                 f"Expected {self.config.n_hvg} genes, got {adata.n_vars}. "
@@ -230,17 +261,23 @@ class ScGPTModel:
 
         self._load_pretrained_model()
 
-        X = adata.X
-        if hasattr(X, "toarray"):  # sparse matrix
-            X = X.toarray()
+        # Process in batches to avoid memory explosion
+        embeddings = []
+        for i in range(0, adata.n_obs, batch_size):
+            batch = adata[i : i + batch_size]
+            X = batch.X
+            if hasattr(X, "toarray"):  # sparse matrix
+                X = np.asarray(X.todense())
 
-        X = torch.tensor(X, dtype=torch.float32).to(self.config.device)
+            X = torch.tensor(X, dtype=torch.float32).to(self.config.device)
 
-        with torch.no_grad():
-            embeddings = self.model(X).cpu().numpy()
+            with torch.no_grad():
+                batch_emb = self.model(X).cpu().numpy()
+                embeddings.append(batch_emb)
 
-        logger.info(f"Encoded {embeddings.shape[0]} cells to {embeddings.shape[1]}-d")
-        return embeddings
+        result = np.vstack(embeddings)
+        logger.info(f"Encoded {result.shape[0]} cells to {result.shape[1]}-d")
+        return result
 
     def fine_tune(
         self,
@@ -271,6 +308,9 @@ class ScGPTModel:
             ValueError: If labels_key not in adata.obs.
             ValueError: If task is unsupported.
         """
+        if self.is_mock:
+            logger.warning("WARNING: Using mock model — results are not from pretrained scGPT")
+
         if labels_key not in adata.obs:
             raise ValueError(f"Label key '{labels_key}' not found in adata.obs")
 

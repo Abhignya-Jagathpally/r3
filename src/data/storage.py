@@ -197,10 +197,6 @@ class StorageManager:
             try:
                 if fmt == "h5ad":
                     path = layer_dir / f"{name}.h5ad"
-                    # Ensure object columns are proper strings for h5ad
-                    for col in adata.obs.columns:
-                        if adata.obs[col].dtype == object:
-                            adata.obs[col] = adata.obs[col].fillna("").astype(str)
                     adata.write_h5ad(path, compression=compression)
                     logger.info(f"Wrote {layer_name} h5ad: {path}")
 
@@ -226,13 +222,15 @@ class StorageManager:
 
         return output_paths
 
-    def read_raw(self, name: str, format: str = "h5ad") -> ad.AnnData:
+    def read_raw(self, name: str, format: str = "h5ad", backed: bool = False) -> ad.AnnData:
         """
         Read data from raw storage layer.
 
         Args:
             name: Dataset name
             format: File format (h5ad, parquet, zarr)
+            backed: If True and format='h5ad', use backed mode for large files.
+                Allows lazy loading. Default: False.
 
         Returns:
             AnnData object
@@ -242,24 +240,39 @@ class StorageManager:
             name=name,
             format=format,
             layer_name="raw",
+            backed=backed,
         )
 
-    def read_standardized(self, name: str, format: str = "h5ad") -> ad.AnnData:
-        """Read data from standardized storage layer."""
+    def read_standardized(self, name: str, format: str = "h5ad", backed: bool = False) -> ad.AnnData:
+        """
+        Read data from standardized storage layer.
+
+        Args:
+            backed: If True and format='h5ad', use backed mode for large files.
+                Default: False.
+        """
         return self._read_from_layer(
             layer_dir=self.standardized_dir,
             name=name,
             format=format,
             layer_name="standardized",
+            backed=backed,
         )
 
-    def read_analysis_ready(self, name: str, format: str = "h5ad") -> ad.AnnData:
-        """Read data from analysis-ready storage layer."""
+    def read_analysis_ready(self, name: str, format: str = "h5ad", backed: bool = False) -> ad.AnnData:
+        """
+        Read data from analysis-ready storage layer.
+
+        Args:
+            backed: If True and format='h5ad', use backed mode for large files.
+                Default: False.
+        """
         return self._read_from_layer(
             layer_dir=self.analysis_ready_dir,
             name=name,
             format=format,
             layer_name="analysis_ready",
+            backed=backed,
         )
 
     def _read_from_layer(
@@ -268,6 +281,7 @@ class StorageManager:
         name: str,
         format: str,
         layer_name: str,
+        backed: bool = False,
     ) -> ad.AnnData:
         """
         Internal method to read data from a storage layer.
@@ -277,6 +291,8 @@ class StorageManager:
             name: Dataset name
             format: File format
             layer_name: Name of layer (for logging)
+            backed: If True and format='h5ad', use backed mode for lazy loading.
+                Default: False.
 
         Returns:
             AnnData object
@@ -289,24 +305,31 @@ class StorageManager:
             path = layer_dir / f"{name}.h5ad"
             if not path.exists():
                 raise FileNotFoundError(f"File not found: {path}")
-            adata = ad.read_h5ad(path)
+            # OPTIMIZATION: Use backed='r' for large files to avoid loading full matrix
+            if backed:
+                adata = ad.read_h5ad(path, backed='r')
+                logger.info(f"Read {layer_name} data (backed mode) from {path}: {adata.shape}")
+            else:
+                adata = ad.read_h5ad(path)
+                logger.info(f"Read {layer_name} data from {path}: {adata.shape}")
 
         elif format == "parquet":
             path = layer_dir / f"{name}.parquet"
             if not path.exists():
                 raise FileNotFoundError(f"File not found: {path}")
             adata = self._read_parquet(path)
+            logger.info(f"Read {layer_name} data from {path}: {adata.shape}")
 
         elif format == "zarr":
             path = layer_dir / f"{name}.zarr"
             if not path.exists():
                 raise FileNotFoundError(f"File not found: {path}")
             adata = self._read_zarr(path)
+            logger.info(f"Read {layer_name} data from {path}: {adata.shape}")
 
         else:
             raise ValueError(f"Unknown format: {format}")
 
-        logger.info(f"Read {layer_name} data from {path}: {adata.shape}")
         return adata
 
     def _write_parquet(
@@ -314,20 +337,33 @@ class StorageManager:
         adata: ad.AnnData,
         path: Path,
         compression: str = "gzip",
+        chunk_size: int = 10000,
     ) -> None:
-        """Write AnnData to Parquet format."""
-        # Convert sparse matrix to dense if needed
-        X = adata.X.toarray() if hasattr(adata.X, "toarray") else adata.X
+        """Write AnnData to Parquet format with chunked conversion to avoid OOM."""
+        import pyarrow as pa
+        import pyarrow.parquet as pq
 
-        # Create DataFrame
-        df = pd.DataFrame(
-            X,
-            index=adata.obs_names,
-            columns=adata.var_names,
-        )
+        writer = None
+        try:
+            for start in range(0, adata.n_obs, chunk_size):
+                end = min(start + chunk_size, adata.n_obs)
+                chunk_X = adata.X[start:end]
+                if hasattr(chunk_X, "toarray"):
+                    chunk_X = chunk_X.toarray()
 
-        # Add metadata as parquet metadata
-        df.to_parquet(path, compression=compression, index=True)
+                df_chunk = pd.DataFrame(
+                    chunk_X,
+                    index=adata.obs_names[start:end],
+                    columns=adata.var_names,
+                )
+                table = pa.Table.from_pandas(df_chunk)
+
+                if writer is None:
+                    writer = pq.ParquetWriter(str(path), table.schema, compression=compression)
+                writer.write_table(table)
+        finally:
+            if writer is not None:
+                writer.close()
 
     def _read_parquet(self, path: Path) -> ad.AnnData:
         """Read AnnData from Parquet format."""
@@ -341,8 +377,10 @@ class StorageManager:
         path: Path,
         compression: str = "gzip",
     ) -> None:
-        """Write AnnData to Zarr format."""
-        adata.write_zarr(path, compression=compression)
+        """Write AnnData to Zarr format with tuned chunk sizes."""
+        # Tune chunk sizes: ~10k cells per chunk, all genes per chunk
+        chunks = (min(10000, adata.n_obs), adata.n_vars)
+        adata.write_zarr(path, chunks=chunks)
 
     def _read_zarr(self, path: Path) -> ad.AnnData:
         """Read AnnData from Zarr format."""

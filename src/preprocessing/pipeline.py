@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Dict, Optional, Tuple
 
 import anndata
+import pandas as pd
 from pydantic import BaseModel, Field
 
 from src.preprocessing.ambient_rna import AmbientRNACorrector
@@ -378,7 +379,3 @@ class PreprocessingPipeline:
         except IOError as e:
             logger.error(f"Failed to save contract: {e}")
             raise
-
-
-# Import pandas for Timestamp
-import pandas as pd

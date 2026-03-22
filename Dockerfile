@@ -49,10 +49,10 @@ USER pipeline
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-    CMD python -c "import src; print('OK')" || exit 1
+    CMD python -c "from src.cli import main; print('OK')" || exit 1
 
 # Default command
-CMD ["python", "-m", "src"]
+CMD ["python", "-m", "src", "--config", "configs/pipeline_config.yaml"]
 
 # Expose ports for MLflow UI
 EXPOSE 5000

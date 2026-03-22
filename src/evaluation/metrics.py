@@ -158,15 +158,10 @@ def compute_graph_connectivity(
     nbrs = NearestNeighbors(n_neighbors=n_neighbors + 1).fit(embeddings)
     distances, indices = nbrs.kneighbors(embeddings)
 
-    # Compute connectivity: for each cell, fraction of k-NN with same label
-    connectivity_scores = []
-    for i in range(len(labels)):
-        knn_indices = indices[i, 1:]  # Exclude self
-        knn_labels = labels[knn_indices]
-        same_label_fraction = (knn_labels == labels[i]).mean()
-        connectivity_scores.append(same_label_fraction)
-
-    graph_connectivity = np.mean(connectivity_scores)
+    # Compute connectivity: for each cell, fraction of k-NN with same label (vectorized)
+    knn_labels = labels[indices[:, 1:]]  # All k-NN labels, excluding self
+    same_label = (knn_labels == labels.reshape(-1, 1)).mean(axis=1)
+    graph_connectivity = float(same_label.mean())
 
     logger.debug(f"Computed graph connectivity: {graph_connectivity:.4f}")
     return float(graph_connectivity)
@@ -276,14 +271,10 @@ def compute_bio_conservation(
     nbrs = NearestNeighbors(n_neighbors=15).fit(embeddings)
     distances, indices = nbrs.kneighbors(embeddings)
 
-    # Simple clustering: assign each cell to most common label in its k-NN
-    knn_cluster_labels = np.zeros(len(labels), dtype=int)
-    for i in range(len(labels)):
-        knn_labels = labels[indices[i]]
-        from collections import Counter
-
-        most_common = Counter(knn_labels).most_common(1)[0][0]
-        knn_cluster_labels[i] = most_common
+    # Simple clustering: assign each cell to most common label in its k-NN (vectorized)
+    from scipy.stats import mode
+    knn_labels = labels[indices]
+    knn_cluster_labels = mode(knn_labels, axis=1, keepdims=False).mode
 
     # Compute NMI (normalized to [0, 1])
     nmi = normalized_mutual_info_score(labels, knn_cluster_labels)

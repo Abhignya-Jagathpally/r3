@@ -274,7 +274,12 @@ class GEODataDownloader:
         if not expression_data:
             raise ValueError(f"No expression data found in {accession}")
 
-        merged_expr = pd.concat(expression_data, axis=1)
+        # Merge incrementally to limit peak memory (concat pairs instead of all-at-once)
+        merged_expr = expression_data[0]
+        for i in range(1, len(expression_data)):
+            merged_expr = pd.concat([merged_expr, expression_data[i]], axis=1)
+            expression_data[i] = None  # free memory eagerly
+
         adata = ad.AnnData(
             X=merged_expr.T.values,
             var=pd.DataFrame(index=merged_expr.index),

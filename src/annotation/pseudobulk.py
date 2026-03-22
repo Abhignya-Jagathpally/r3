@@ -118,18 +118,24 @@ class PseudobulkAggregator:
             f"{patient_key}-{celltype_key} combinations"
         )
 
-        # Aggregate counts
+        # Aggregate counts using groupby for efficiency
+        group_labels = pd.DataFrame({
+            patient_key: patients,
+            celltype_key: celltypes,
+        })
+        grouped = group_labels.groupby([patient_key, celltype_key])
+
         agg_matrix = []
         group_info = []
 
-        for patient, celltype in unique_groups:
-            mask = (patients == patient) & (celltypes == celltype)
-            n_cells = mask.sum()
+        for (patient, celltype), idx in grouped.groups.items():
+            indices = idx.values
+            n_cells = len(indices)
 
             if sparse.issparse(X):
-                group_counts = np.asarray(X[mask].sum(axis=0)).flatten()
+                group_counts = np.asarray(X[indices].sum(axis=0)).flatten()
             else:
-                group_counts = X[mask].sum(axis=0)
+                group_counts = X[indices].sum(axis=0)
 
             agg_matrix.append(group_counts)
             group_info.append({
@@ -210,22 +216,25 @@ class PseudobulkAggregator:
 
         self.logger.info(f"Found {len(unique_groups)} unique group combinations")
 
-        # Aggregate
+        # Aggregate using groupby for efficiency
+        group_labels = pd.DataFrame({
+            patient_key: patients,
+            compartment_key: compartments,
+            celltype_key: celltypes,
+        })
+        grouped = group_labels.groupby([patient_key, compartment_key, celltype_key])
+
         agg_matrix = []
         group_info = []
 
-        for patient, compartment, celltype in unique_groups:
-            mask = (
-                (patients == patient) &
-                (compartments == compartment) &
-                (celltypes == celltype)
-            )
-            n_cells = mask.sum()
+        for (patient, compartment, celltype), idx in grouped.groups.items():
+            indices = idx.values
+            n_cells = len(indices)
 
             if sparse.issparse(X):
-                group_counts = np.asarray(X[mask].sum(axis=0)).flatten()
+                group_counts = np.asarray(X[indices].sum(axis=0)).flatten()
             else:
-                group_counts = X[mask].sum(axis=0)
+                group_counts = X[indices].sum(axis=0)
 
             agg_matrix.append(group_counts)
             group_info.append({

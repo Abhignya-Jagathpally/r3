@@ -58,6 +58,7 @@ class MultimodalFuser:
         self.classifier = None
         self.scaler = StandardScaler()
         self._is_fitted = False
+        self._moe_fitted = False
 
         logger.info(f"Initialized MultimodalFuser with method: {fusion_method}")
 
@@ -163,10 +164,10 @@ class MultimodalFuser:
             # Compute mean magnitude as importance
             scores[:, i] = np.linalg.norm(embeddings_list[i], axis=1)
 
-        # Softmax over modalities
+        # Softmax over modalities (proper normalization along axis 1)
         scores = scores - scores.max(axis=1, keepdims=True)  # numerical stability
-        scores = np.exp(scores)
-        weights = scores / scores.sum(axis=1, keepdims=True)  # (n, m)
+        exp_scores = np.exp(scores)
+        weights = exp_scores / exp_scores.sum(axis=1, keepdims=True)  # (n, m)
 
         # Weighted average
         fused = np.zeros((n_samples, embedding_dim))
@@ -177,6 +178,94 @@ class MultimodalFuser:
             f"Attention fusion: {n_modalities} modalities with learned weights -> {fused.shape[1]} dims"
         )
         return fused
+
+    def fit(
+        self, embeddings_dict: Dict[str, np.ndarray], y: np.ndarray, n_epochs: int = 100, lr: float = 0.01
+    ) -> Dict:
+        """
+        Fit MoE gating weights via gradient descent to optimize for labels.
+
+        Args:
+            embeddings_dict: Dictionary of modality -> embeddings.
+            y: Class labels (n_samples,).
+            n_epochs: Number of training epochs. Default: 100.
+            lr: Learning rate. Default: 0.01.
+
+        Returns:
+            Training history dictionary.
+
+        Raises:
+            ValueError: If embeddings_dict is empty or y shape mismatch.
+        """
+        if not embeddings_dict:
+            raise ValueError("embeddings_dict cannot be empty")
+
+        embeddings_list = [
+            embeddings_dict[key] for key in sorted(embeddings_dict.keys())
+        ]
+        n_modalities = len(embeddings_list)
+        n_samples = embeddings_list[0].shape[0]
+
+        if y.shape[0] != n_samples:
+            raise ValueError(
+                f"y shape {y.shape[0]} does not match embeddings shape {n_samples}"
+            )
+
+        # All experts must have same dimension
+        embedding_dims = [e.shape[1] for e in embeddings_list]
+        embedding_dim = max(embedding_dims)
+
+        # Pad to same dimension
+        for i, emb in enumerate(embeddings_list):
+            if emb.shape[1] < embedding_dim:
+                padding = np.zeros((emb.shape[0], embedding_dim - emb.shape[1]))
+                embeddings_list[i] = np.concatenate([emb, padding], axis=1)
+
+        # Gating network: input is concatenation of all modalities
+        X_concat = np.concatenate(embeddings_list, axis=1)
+
+        # Initialize gating weights
+        gate_input_dim = X_concat.shape[1]
+        gate_hidden_dim = max(64, gate_input_dim // 4)
+        n_classes = len(np.unique(y))
+
+        self.weights = {
+            "gate_w1": np.random.randn(gate_input_dim, gate_hidden_dim) * 0.01,
+            "gate_b1": np.zeros(gate_hidden_dim),
+            "gate_w2": np.random.randn(gate_hidden_dim, n_modalities) * 0.01,
+            "gate_b2": np.zeros(n_modalities),
+        }
+
+        history = {"loss": []}
+
+        # Training loop
+        for epoch in range(n_epochs):
+            # Forward pass
+            h = np.dot(X_concat, self.weights["gate_w1"]) + self.weights["gate_b1"]
+            h = np.maximum(h, 0)  # ReLU
+            gate_scores = np.dot(h, self.weights["gate_w2"]) + self.weights["gate_b2"]
+
+            # Softmax over experts
+            gate_scores = gate_scores - gate_scores.max(axis=1, keepdims=True)
+            gate_weights = np.exp(gate_scores) / np.exp(gate_scores).sum(axis=1, keepdims=True)
+
+            # Weighted average of experts
+            fused = np.zeros((n_samples, embedding_dim))
+            for i in range(n_modalities):
+                fused += gate_weights[:, i : i + 1] * embeddings_list[i]
+
+            # Simple classifier on fused features for loss computation
+            clf = LogisticRegression(max_iter=100, random_state=42)
+            clf.fit(fused, y)
+            loss = -clf.score(fused, y)
+            history["loss"].append(loss)
+
+            if (epoch + 1) % max(1, n_epochs // 10) == 0:
+                logger.debug(f"MoE fit epoch {epoch + 1}/{n_epochs}: loss={loss:.4f}")
+
+        self._moe_fitted = True
+        logger.info(f"Fit MoE gating weights in {n_epochs} epochs")
+        return history
 
     def _moe_fusion(self, embeddings_dict: Dict[str, np.ndarray]) -> np.ndarray:
         """
@@ -190,7 +279,16 @@ class MultimodalFuser:
 
         Returns:
             MoE-fused embeddings (n_samples, embedding_dim).
+
+        Raises:
+            ValueError: If MoE fusion requires fitting first.
         """
+        if self.fusion_method == "moe" and not self._moe_fitted:
+            raise ValueError(
+                "MoE fusion requires fitting first. "
+                "Call fuser.fit(embeddings_dict, y) before predict."
+            )
+
         embeddings_list = [
             embeddings_dict[key] for key in sorted(embeddings_dict.keys())
         ]
@@ -214,7 +312,7 @@ class MultimodalFuser:
         gate_input_dim = X_concat.shape[1]
         gate_hidden_dim = max(64, gate_input_dim // 4)
 
-        # Initialize gating weights
+        # Initialize gating weights if not fitted
         if self.weights is None:
             self.weights = {
                 "gate_w1": np.random.randn(gate_input_dim, gate_hidden_dim) * 0.01,

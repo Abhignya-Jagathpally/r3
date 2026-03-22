@@ -142,7 +142,7 @@ class DoubletDetector:
             try:
                 import scanpy as sc
                 sc.pp.pca(adata, n_comps=50)
-            except Exception as e:
+            except (ValueError, KeyError, AttributeError) as e:
                 logger.error(f"Failed to compute PCA: {e}")
                 raise ValueError("Cannot compute PCA for DoubletFinder")
 
@@ -181,7 +181,7 @@ class DoubletDetector:
                 f"({n_doublets/adata.n_obs*100:.2f}% of cells)"
             )
 
-        except Exception as e:
+        except (ValueError, KeyError, AttributeError) as e:
             logger.error(f"DoubletFinder failed: {e}")
             raise ValueError(f"DoubletFinder detection failed: {e}")
 

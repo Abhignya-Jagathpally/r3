@@ -38,61 +38,9 @@ class ScVIIntegrator:
         >>> adata = integrator.integrate(adata, batch_key='batch')
     """
 
-    def __init__(
-        self,
-        n_latent: int = 32,
-        dispersion: str = "gene-batch",
-        gene_likelihood: str = "nb",
-    ):
+    def __init__(self):
         """Initialize ScVIIntegrator."""
         self.logger = logger
-        self.n_latent = n_latent
-        self.dispersion = dispersion
-        self.gene_likelihood = gene_likelihood
-        self._model = None
-        self._adata = None
-
-    def setup(self, adata: ad.AnnData, batch_key: str = "dataset", layer: Optional[str] = None):
-        """Setup AnnData for scVI training."""
-        self._adata = adata
-        use_layer = layer
-        if use_layer is None:
-            # Try common layer names
-            for candidate in ["raw_counts", "counts"]:
-                if candidate in adata.layers:
-                    use_layer = candidate
-                    break
-        if use_layer and use_layer in adata.layers:
-            scvi.model.SCVI.setup_anndata(adata, batch_key=batch_key, layer=use_layer)
-        else:
-            scvi.model.SCVI.setup_anndata(adata, batch_key=batch_key)
-        self._model = scvi.model.SCVI(
-            adata, n_latent=self.n_latent,
-            dispersion=self.dispersion,
-            gene_likelihood=self.gene_likelihood,
-        )
-        self.logger.info(f"scVI model setup: n_latent={self.n_latent}, batch_key={batch_key}")
-
-    def train(self, max_epochs: int = 100, early_stopping: bool = True):
-        """Train the scVI model."""
-        self._model.train(
-            max_epochs=max_epochs,
-            early_stopping=early_stopping,
-            plan_kwargs={"reduce_lr_on_plateau": True},
-        )
-        self.logger.info("scVI training complete")
-
-    def save(self, path: str):
-        """Save the trained scVI model."""
-        self._model.save(path, overwrite=True)
-        self.logger.info(f"scVI model saved to {path}")
-
-    @classmethod
-    def load(cls, path: str, adata: ad.AnnData) -> "ScVIIntegrator":
-        """Load a saved scVI model."""
-        obj = cls()
-        obj._model = scvi.model.SCVI.load(path, adata=adata)
-        return obj
 
     def setup_anndata(
         self,
@@ -188,25 +136,54 @@ class ScVIIntegrator:
         self.logger.info(
             f"Initializing scVI model with n_latent={n_latent}..."
         )
-        model = scvi.model.SCVI(
-            adata,
-            n_latent=n_latent,
-            use_observed_lib_size=False,
-        )
 
-        self.logger.info(
-            f"Training scVI for {n_epochs} epochs with lr={learning_rate}..."
-        )
-        model.train(
-            max_epochs=max_epochs or n_epochs,
-            batch_size=batch_size,
-            lr=learning_rate,
-            use_gpu=use_gpu,
-            plan_kwargs={"reduce_lr_on_plateau": True},
-        )
+        try:
+            model = scvi.model.SCVI(
+                adata,
+                n_latent=n_latent,
+                use_observed_lib_size=False,
+            )
 
-        self.logger.info("scVI training complete.")
-        return model
+            self.logger.info(
+                f"Training scVI for {n_epochs} epochs with lr={learning_rate}..."
+            )
+            model.train(
+                max_epochs=max_epochs or n_epochs,
+                batch_size=batch_size,
+                plan_kwargs={
+                    "lr": learning_rate,
+                    "reduce_lr_on_plateau": True,
+                },
+            )
+
+            self.logger.info("scVI training complete.")
+            return model
+
+        except RuntimeError as e:
+            if "CUDA" in str(e) or "out of memory" in str(e).lower():
+                self.logger.error(
+                    "GPU out of memory. Try reducing batch_size or n_latent."
+                )
+                raise RuntimeError(
+                    "GPU out of memory. Try reducing batch_size or n_latent."
+                ) from e
+            else:
+                self.logger.error(f"Training failed with runtime error: {e}")
+                raise
+
+        except ValueError as e:
+            if "counts" in str(e).lower() or "layer" in str(e).lower():
+                self.logger.error(
+                    "Training failed — check that adata.layers['counts'] "
+                    "contains raw integer counts."
+                )
+                raise ValueError(
+                    "Training failed — check that adata.layers['counts'] "
+                    "contains raw integer counts."
+                ) from e
+            else:
+                self.logger.error(f"Training failed with value error: {e}")
+                raise
 
     def get_latent(
         self,
@@ -240,9 +217,9 @@ class ScVIIntegrator:
     def integrate(
         self,
         adata: ad.AnnData,
-        batch_key: str = "dataset",
+        batch_key: str = "batch",
         layer: str = "counts",
-        n_latent: int = 32,
+        n_latent: int = 30,
         n_epochs: int = 100,
         batch_size: int = 128,
     ) -> ad.AnnData:
@@ -267,32 +244,35 @@ class ScVIIntegrator:
         Raises:
             ValueError: If layer or batch_key not found.
         """
-        # If setup/train already called (separate API), use stored model
-        if self._model is not None:
-            latent = self._model.get_latent_representation(adata=adata)
-            adata.obsm["X_scVI"] = latent
-            adata.uns["scvi"] = {
-                "n_latent": self.n_latent,
-                "batch_key": batch_key,
-            }
-            self.logger.info(f"scVI integration complete. Latent shape: {latent.shape}")
-            return adata
-
-        # All-in-one fallback
         if layer not in adata.layers:
-            self.logger.warning(f"Layer '{layer}' not found, using X directly")
-            scvi.model.SCVI.setup_anndata(adata, batch_key=batch_key)
-        else:
-            scvi.model.SCVI.setup_anndata(adata, batch_key=batch_key, layer=layer)
+            raise ValueError(
+                f"layer '{layer}' not found in adata.layers. "
+                f"Available: {list(adata.layers.keys())}"
+            )
+        if batch_key not in adata.obs:
+            raise ValueError(
+                f"batch_key '{batch_key}' not found in adata.obs. "
+                f"Available: {list(adata.obs.columns)}"
+            )
 
-        model = scvi.model.SCVI(adata, n_latent=n_latent)
-        model.train(max_epochs=n_epochs, batch_size=batch_size)
+        # Setup
+        self.setup_anndata(adata, batch_key=batch_key, layer=layer)
 
-        latent = model.get_latent_representation(adata=adata)
+        # Train
+        model = self.train_scvi(
+            adata,
+            n_latent=n_latent,
+            n_epochs=n_epochs,
+            batch_size=batch_size,
+        )
+
+        # Extract latent
+        latent = self.get_latent(adata, model)
         adata.obsm["X_scVI"] = latent
-        self._model = model
 
+        # Store model reference
         adata.uns["scvi"] = {
+            "model_path": None,
             "n_latent": n_latent,
             "batch_key": batch_key,
         }

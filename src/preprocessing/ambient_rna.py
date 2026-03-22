@@ -103,14 +103,16 @@ class AmbientRNACorrector:
         cell_totals = raw_X_dense.sum(axis=1)
         ambient_fraction = np.zeros(adata.n_obs)
 
-        for i in range(adata.n_obs):
-            # Estimate ambient fraction as ratio of ambient genes to total
-            # Use top ambient genes for estimation
-            top_ambient_genes = np.argsort(ambient_profile)[-100:]
-            ambient_contribution = raw_X_dense[i, top_ambient_genes].sum()
-            ambient_fraction[i] = min(
-                ambient_contribution / cell_totals[i] if cell_totals[i] > 0 else 0, 0.9
-            )
+        # OPTIMIZATION: Hoist argsort outside loop - O(m log m + n) instead of O(n * m log m)
+        top_ambient_genes = np.argsort(ambient_profile)[-100:]
+
+        # Vectorized computation of ambient contributions
+        ambient_contributions = raw_X_dense[:, top_ambient_genes].sum(axis=1)
+        ambient_fraction = np.minimum(
+            ambient_contributions / np.where(cell_totals > 0, cell_totals, 1), 0.9
+        )
+        # Handle zero cell totals
+        ambient_fraction[cell_totals == 0] = 0
 
         # Store contamination fraction
         adata.obs["soupx_contamination_fraction"] = ambient_fraction
@@ -118,11 +120,11 @@ class AmbientRNACorrector:
 
         logger.info(f"Estimated mean contamination fraction: {contamination_mean:.4f}")
 
-        # Create corrected counts by subtracting ambient contribution
+        # Create corrected counts by subtracting ambient contribution (vectorized)
         corrected_X = raw_X_dense.copy()
-        for i in range(adata.n_obs):
-            ambient_counts = ambient_profile * cell_totals[i] * ambient_fraction[i]
-            corrected_X[i] = np.maximum(corrected_X[i] - ambient_counts, 0)
+        # Broadcast: (n_obs, 1) * (n_genes,) = (n_obs, n_genes)
+        ambient_counts = (ambient_profile * cell_totals[:, np.newaxis] * ambient_fraction[:, np.newaxis])
+        corrected_X = np.maximum(corrected_X - ambient_counts, 0)
 
         # Update expression matrix
         if issparse(adata.X):
@@ -197,16 +199,16 @@ class AmbientRNACorrector:
         background_profile = X_dense[:, background_genes].mean(axis=1)
         background_profile = background_profile / background_profile.sum()
 
-        # Estimate contamination per cell
+        # Estimate contamination per cell (vectorized)
         cell_totals = X_dense.sum(axis=1)
-        contamination_scores = np.zeros(adata.n_obs)
-
-        for i in range(adata.n_obs):
-            # Contamination score based on background gene expression
-            background_content = X_dense[i, background_genes].sum()
-            contamination_scores[i] = (
-                background_content / cell_totals[i] if cell_totals[i] > 0 else 0
-            )
+        # Vectorized computation of background content per cell
+        background_content = X_dense[:, background_genes].sum(axis=1)
+        contamination_scores = np.divide(
+            background_content,
+            cell_totals,
+            where=(cell_totals > 0),
+            out=np.zeros_like(background_content, dtype=float)
+        )
 
         # Convert to decontamination probability
         decontamination_prob = 1 - np.minimum(contamination_scores, 0.99)
@@ -214,14 +216,12 @@ class AmbientRNACorrector:
         adata.obs["decontx_decontamination_prob"] = decontamination_prob
         adata.obs["decontx_contamination_score"] = contamination_scores
 
-        # Apply correction: scale down low-confidence genes
+        # Apply correction: scale down low-confidence genes (vectorized)
         corrected_X = X_dense.copy()
-        for i in range(adata.n_obs):
-            correction_factor = decontamination_prob[i]
-            # More aggressive correction for background genes
-            corrected_X[i, background_genes] = (
-                corrected_X[i, background_genes] * correction_factor
-            )
+        # Broadcast: (n_obs, 1) * (n_background_genes,) = (n_obs, n_background_genes)
+        corrected_X[:, background_genes] = (
+            corrected_X[:, background_genes] * decontamination_prob[:, np.newaxis]
+        )
 
         # Update expression matrix
         if issparse(adata.X):

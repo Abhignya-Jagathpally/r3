@@ -445,7 +445,8 @@ def main():
 
     # Load data
     logger.info(f"Loading data from {args.data}")
-    adata = AnnData.read_h5ad(args.data)
+    import anndata as ad
+    adata = ad.read_h5ad(args.data)
 
     # Run benchmark
     tracker = ExperimentTracker(backend=args.backend)

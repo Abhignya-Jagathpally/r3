@@ -63,11 +63,9 @@ rule download:
         runtime = 240,
     shell:
         """
-        python -m src.data.download \
-            --accession {params.accession} \
+        python -m src --stage download \
             --config {params.config} \
-            --output {output.data} \
-            --metrics {output.metrics} \
+            --data-dir {DATA_DIR} \
             2>&1 | tee {log}
         """
 
@@ -91,11 +89,9 @@ rule qc:
         runtime = 480,
     shell:
         """
-        python -m src.preprocessing.qc \
-            --input {input.data} \
-            --output {output.data} \
+        python -m src --stage preprocess \
             --config {params.config} \
-            --metrics {output.metrics} \
+            --data-dir {DATA_DIR} \
             2>&1 | tee {log}
         touch {output.done}
         """
@@ -123,11 +119,10 @@ rule integrate:
         runtime = 720,
     shell:
         """
-        python -m src.integration.integrate \
-            --input_dir {params.standardized_data} \
-            --output {output.data} \
+        python -m src --stage integrate \
             --config {params.config} \
-            --metrics {output.metrics} \
+            --data-dir {DATA_DIR} \
+            --output-dir {RESULTS_DIR} \
             2>&1 | tee {log}
         touch {output.done}
         """
@@ -153,11 +148,10 @@ rule annotate:
     shell:
         """
         mkdir -p {params.output_dir}
-        python -m src.annotation.annotate \
-            --input {input.data} \
-            --output {output.data} \
-            --annotations {output.annotations} \
+        python -m src --stage annotate \
             --config {params.config} \
+            --data-dir {DATA_DIR} \
+            --output-dir {RESULTS_DIR} \
             2>&1 | tee {log}
         touch {output.done}
         """
@@ -184,12 +178,10 @@ rule evaluate:
     shell:
         """
         mkdir -p {params.output_dir} {output.plots}
-        python -m src.evaluation.evaluate \
-            --input {input.data} \
-            --annotations {input.annotations} \
-            --output {output.metrics} \
+        python -m src --stage evaluate \
             --config {params.config} \
-            --plot_dir {output.plots} \
+            --data-dir {DATA_DIR} \
+            --output-dir {RESULTS_DIR} \
             2>&1 | tee {log}
         touch {output.done}
         """
@@ -216,12 +208,10 @@ rule pseudobulk:
     shell:
         """
         mkdir -p {params.output_dir}
-        python -m src.evaluation.pseudobulk \
-            --input {input.data} \
-            --annotations {input.annotations} \
-            --output {output.data} \
+        python -m src --stage pseudobulk \
             --config {params.config} \
-            --metrics {output.metrics} \
+            --data-dir {DATA_DIR} \
+            --output-dir {RESULTS_DIR} \
             2>&1 | tee {log}
         touch {output.done}
         """
