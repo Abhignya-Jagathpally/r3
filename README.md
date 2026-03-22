@@ -1,138 +1,199 @@
 # R3-MM Pipeline: Multiple Myeloma Single-Cell Computational Biology
 
-A comprehensive, production-quality pipeline for analyzing single-cell RNA-seq data from Multiple Myeloma (MM) patient samples. This pipeline integrates state-of-the-art computational methods for data preprocessing, integration, cell type annotation, and downstream analyses.
+A comprehensive pipeline for analyzing single-cell RNA-seq data from Multiple Myeloma (MM) patient samples. Integrates preprocessing, batch correction, cell type annotation, classical ML benchmarks, and pseudobulk aggregation with full CLI orchestration.
+
+## Results
+
+### Dataset Summary
+
+The pipeline was run end-to-end on two public GEO datasets:
+
+| Dataset | Cells | Median Genes/Cell | Median UMI/Cell | Median Mito % | Cell Types |
+|---------|------:|------------------:|----------------:|--------------:|-----------:|
+| GSE271107 (MM Longitudinal) | 119,322 | 1,790 | 6,026 | 5.9% | 23 |
+| GSE106218 (MM Atlas) | 265 | 3,373 | 1,000,000 | 3.7% | 8 |
+| **Total** | **119,587** | — | — | — | **23** |
+
+### Cell Type Annotation
+
+Three annotation methods were applied and combined via consensus voting:
+
+| Method | Unique Types | Unknown % | NMI vs CellTypist |
+|--------|-------------:|----------:|-------------------:|
+| Marker-Based | 8 | 31.8% | 0.6642 |
+| CellTypist | 16 | 0.0% | — |
+| Consensus | 23 | 1.7% | — |
+
+**Cell type distribution (consensus):**
+
+| Cell Type | Cells | Fraction |
+|-----------|------:|---------:|
+| Classical monocytes | 23,613 | 19.75% |
+| T cell | 23,397 | 19.56% |
+| Late erythroid | 13,384 | 11.19% |
+| Mid erythroid | 13,009 | 10.88% |
+| NK cell | 11,103 | 9.28% |
+| B cell | 10,068 | 8.42% |
+| CD16+ NK cells | 5,503 | 4.60% |
+| Plasma cells (PC) | 5,110 | 4.27% |
+| HSC/MPP | 2,831 | 2.37% |
+| Tcm/Naive helper T cells | 2,628 | 2.20% |
+| Other (13 types) | 2,931 | 2.48% |
+
+### UMAP Visualizations
+
+**Cell type annotations and batch structure:**
+
+![UMAP by Cell Type and Batch](results/figures/umap_celltype_batch.png)
+
+**Integration method comparison (PCA vs Harmony vs scVI):**
+
+![Integration Comparison](results/figures/integration_comparison.png)
+
+**QC metrics by dataset:**
+
+![QC Metrics](results/figures/qc_metrics.png)
+
+**Cell type composition by dataset:**
+
+![Cell Type Composition](results/figures/celltype_composition.png)
+
+**Annotation method agreement (Marker vs CellTypist):**
+
+![Annotation Agreement](results/figures/annotation_agreement.png)
+
+### Integration Benchmarks
+
+Batch correction was evaluated on a 20,000-cell subsample across three embedding spaces:
+
+| Method | Bio Silhouette | Batch Silhouette | Graph Connectivity | Batch Entropy (norm) |
+|--------|---------------:|-----------------:|-------------------:|---------------------:|
+| PCA (no correction) | **0.1640** | 0.0108 | **0.9009** | 0.0005 |
+| Harmony | 0.1467 | 0.0668 | 0.9022 | **0.0054** |
+| scVI | 0.0853 | **0.5178** | 0.8789 | 0.0010 |
+
+- **Bio Silhouette**: Higher = better biological signal preservation
+- **Batch Silhouette**: Higher = stronger batch removal (ideal: high batch sil + high bio sil)
+- **Graph Connectivity**: Fraction of k-NN neighbors sharing the same cell type label
+- Harmony provides the best balance of batch mixing and biological conservation
+
+### Classical Baseline Benchmarks
+
+Cell type classification on PCA embeddings (5-fold stratified CV, 20,000 cells, 20 cell types):
+
+| Model | Accuracy | ARI | NMI |
+|-------|:--------:|:---:|:---:|
+| Logistic Regression | **0.9336 +/- 0.0031** | **0.9054 +/- 0.0067** | 0.8896 +/- 0.0068 |
+| Random Forest | 0.9316 +/- 0.0036 | 0.9010 +/- 0.0070 | **0.8941 +/- 0.0052** |
+| Linear SVM | 0.9300 +/- 0.0028 | 0.9002 +/- 0.0057 | 0.8897 +/- 0.0059 |
+
+All three baselines achieve >93% accuracy and >0.90 ARI, indicating that the consensus cell type labels are well-separated in PCA space.
+
+![Baseline Benchmarks](results/figures/baseline_benchmarks.png)
 
 ## Overview
 
-The R3-MM pipeline implements a complete workflow for single-cell RNA-seq analysis with emphasis on reproducibility, scalability, and agentic optimization. The pipeline is built on modern bioinformatics tools and frameworks, supporting both local execution and high-performance computing (HPC) environments.
+The R3-MM pipeline implements a complete workflow for single-cell RNA-seq analysis with emphasis on reproducibility, scalability, and agentic optimization.
 
 ### Key Features
 
-- **Multi-Stage Data Management**: Enforced staging layers (raw → standardized → analysis_ready)
-- **Batch Effect Correction**: Integration methods including Harmony and scVI
-- **Cell Type Annotation**: Multiple annotation methods (CellTypist, scGPT)
+- **CLI Entry Point**: Full pipeline orchestration via `python -m src --stage <name>`
+- **Multi-Stage Data Management**: Enforced staging layers (raw -> standardized -> analysis_ready)
+- **Batch Effect Correction**: Harmony and scVI integration methods
+- **Cell Type Annotation**: CellTypist + marker-based + consensus voting
+- **Statistical Testing**: Bootstrap CI, Wilcoxon signed-rank, Friedman tests for benchmark comparisons
 - **Agentic Tuning**: Automatic hyperparameter optimization with configurable search space
 - **Experiment Tracking**: MLflow and Weights & Biases integration
-- **Containerization**: Docker and Apptainer support for reproducible execution
-- **Workflow Orchestration**: Both Nextflow and Snakemake pipelines
-- **HPC Support**: SLURM integration for cluster execution
-
-## Project Structure
-
-```
-r3/
-├── README.md                       # Project documentation
-├── pyproject.toml                  # Python packaging configuration
-├── Dockerfile                      # Docker container definition
-├── Apptainer.def                   # Apptainer/Singularity definition
-├── configs/
-│   ├── pipeline_config.yaml        # Master configuration
-│   ├── mlflow_config.yaml          # MLflow settings
-│   ├── wandb_config.yaml           # Weights & Biases settings
-│   ├── dvc.yaml                    # DVC pipeline stages
-│   └── nextflow.config             # Nextflow configuration
-├── data/
-│   ├── raw/                        # Original downloaded data
-│   ├── standardized/               # QC-filtered data
-│   └── analysis_ready/             # Integrated and annotated data
-├── src/
-│   ├── config.py                   # Configuration management
-│   ├── data/
-│   │   ├── download.py             # GEO data download
-│   │   └── storage.py              # Storage management
-│   ├── preprocessing/              # QC and preprocessing
-│   ├── annotation/                 # Cell type annotation
-│   ├── integration/                # Batch correction
-│   ├── models/                     # Machine learning models
-│   ├── evaluation/                 # Metrics and analysis
-│   └── agentic/                    # Agentic tuning
-├── workflows/
-│   ├── main.nf                     # Nextflow workflow
-│   ├── Snakefile                   # Snakemake workflow
-│   └── modules/                    # Workflow modules
-├── tests/
-│   ├── test_config.py              # Configuration tests
-│   └── ...
-├── notebooks/                      # Analysis notebooks
-├── benchmarks/                     # Benchmarking scripts
-└── literature/                     # Reference materials
-```
+- **Containerization**: Docker and Apptainer support
+- **Workflow Orchestration**: Nextflow and Snakemake pipelines
 
 ## Installation
 
 ### Requirements
 
-- Python ≥ 3.11
+- Python >= 3.9
 - 16 GB RAM minimum (64 GB recommended for full pipeline)
 - CUDA 11.8+ (optional, for GPU acceleration)
 
 ### Setup
 
-1. **Clone the repository**:
-   ```bash
-   git clone https://github.com/abhignya-j/r3-mm-pipeline.git
-   cd r3
-   ```
+```bash
+git clone https://github.com/Abhignya-Jagathpally/r3.git
+cd r3
+python -m venv venv
+source venv/bin/activate
+pip install -e .
+```
 
-2. **Create virtual environment** (recommended):
-   ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
-   ```
-
-3. **Install package**:
-   ```bash
-   pip install -e .
-   ```
-
-4. **Install optional dependencies**:
-   ```bash
-   # For development
-   pip install -e ".[dev]"
-
-   # For testing
-   pip install -e ".[test]"
-
-   # For documentation
-   pip install -e ".[docs]"
-   ```
-
-### Docker Installation
+### Docker
 
 ```bash
-# Build Docker image
 docker build -t r3-mm-pipeline:latest .
-
-# Run container
-docker run --rm -v $(pwd):/app r3-mm-pipeline:latest python -m src.data.download
+docker run --rm -v $(pwd):/app r3-mm-pipeline:latest python -m src --stage download
 ```
 
-### Apptainer/Singularity Installation
+## Usage
+
+### CLI (Recommended)
 
 ```bash
-# Build Apptainer image
-apptainer build r3-mm-pipeline.sif Apptainer.def
+# Run a single stage
+python -m src --stage download
+python -m src --stage preprocess
+python -m src --stage integrate
+python -m src --stage annotate
+python -m src --stage pseudobulk
+python -m src --stage train
+python -m src --stage evaluate
 
-# Run container
-apptainer run r3-mm-pipeline.sif python -m src.data.download
+# Run multiple stages
+python -m src --stages "download,preprocess,integrate,annotate"
+
+# Run all stages
+python -m src --stages "download,preprocess,integrate,annotate,pseudobulk,train,evaluate"
+
+# Dry run (show what would happen)
+python -m src --stages "download,preprocess,integrate" --dry-run
+
+# Custom config and directories
+python -m src --stage preprocess --config my_config.yaml --data-dir ./my_data
 ```
+
+### Snakemake
+
+```bash
+snakemake --cores all --config config_file=configs/pipeline_config.yaml
+```
+
+### Nextflow
+
+```bash
+nextflow run workflows/main.nf --config configs/pipeline_config.yaml
+```
+
+## Pipeline Stages
+
+| Stage | Description | Key Methods |
+|-------|-------------|-------------|
+| **Download** | Retrieve scRNA-seq data from GEO | GEOparse, 10x h5 parsing |
+| **Preprocess** | QC filtering, normalization, HVG selection | scanpy, SoupX ambient RNA correction |
+| **Integrate** | Batch effect correction | Harmony, scVI (VAE) |
+| **Annotate** | Cell type labeling | CellTypist, marker scoring, consensus voting |
+| **Pseudobulk** | Aggregate to patient x cell type | Sparse-aware groupby sum |
+| **Train** | Classical + foundation model training | Logistic Regression, RF, SVM, scGPT |
+| **Evaluate** | Benchmark metrics + statistical tests | ARI, NMI, silhouette, bootstrap CI, Wilcoxon |
 
 ## Configuration
 
-### Main Configuration File
-
-Edit `configs/pipeline_config.yaml` to customize pipeline parameters:
+Edit `configs/pipeline_config.yaml`:
 
 ```yaml
-pipeline:
-  name: "r3-mm-pipeline"
-  version: "0.1.0"
-
 data_sources:
   datasets:
     - accession: "GSE271107"
       name: "Multiple Myeloma Longitudinal"
-      # ...
+    - accession: "GSE106218"
+      name: "Multiple Myeloma Atlas"
 
 qc:
   min_genes: 200
@@ -142,320 +203,92 @@ qc:
 preprocessing:
   normalization:
     method: "log_normalize"
+    target_sum: 10000
   hvg_selection:
     n_top_genes: 5000
 
 integration:
   methods:
     - name: "harmony"
-      theta: 2.0
+    - name: "scvi"
 
 annotation:
   methods:
     - name: "celltypist"
-    - name: "scgpt"
-
-agentic:
-  enabled: true
-  search_budget: 100
-  editable_surface:
-    - "qc.max_mito_pct"
-    - "preprocessing.hvg_selection.n_top_genes"
+      model: "Immune_All_Low.pkl"
 ```
 
-## Usage
+## Project Structure
 
-### Quick Start
-
-1. **Download data**:
-   ```bash
-   python -m src.data.download
-   ```
-
-2. **Run full pipeline** (Nextflow):
-   ```bash
-   nextflow run workflows/main.nf --config configs/pipeline_config.yaml
-   ```
-
-3. **Alternative: Snakemake**:
-   ```bash
-   snakemake --cores all --config config_file=configs/pipeline_config.yaml
-   ```
-
-### Command-Line Examples
-
-```bash
-# Download specific datasets
-python -c "from src.data.download import download_gse_data; download_gse_data(['GSE271107'])"
-
-# Run QC on raw data
-python -m src.preprocessing.qc --config configs/pipeline_config.yaml
-
-# Integrate datasets
-python -m src.integration.integrate --config configs/pipeline_config.yaml
-
-# Annotate cell types
-python -m src.annotation.annotate --config configs/pipeline_config.yaml
-
-# Run evaluation metrics
-python -m src.evaluation.evaluate --config configs/pipeline_config.yaml
+```
+r3/
+├── src/
+│   ├── __main__.py              # Entry point (python -m src)
+│   ├── cli.py                   # CLI with 8 pipeline stages
+│   ├── config.py                # Configuration management
+│   ├── data/                    # Download + storage
+│   ├── preprocessing/           # QC, normalization, ambient RNA, doublets
+│   ├── integration/             # Harmony, scVI
+│   ├── annotation/              # CellTypist, markers, consensus, pseudobulk
+│   ├── models/                  # Classical baselines, scGPT, multimodal fusion
+│   ├── evaluation/              # Metrics, splits, statistical tests
+│   └── agentic/                 # Experiment runner, contract enforcer
+├── workflows/
+│   ├── Snakefile                # Snakemake workflow
+│   ├── main.nf                  # Nextflow workflow
+│   └── modules/                 # Per-stage Nextflow modules
+├── configs/                     # Pipeline configuration
+├── benchmarks/                  # Benchmarking scripts
+├── tests/                       # Test suite
+├── results/
+│   ├── figures/                 # Generated plots
+│   └── tables/                  # Generated CSV tables
+├── Dockerfile
+├── Apptainer.def
+└── pyproject.toml
 ```
 
-### Python API Usage
+## Performance
 
-```python
-from src.config import load_config
-from src.data.download import download_gse_data
-from src.data.storage import StorageManager
+Runtimes on a single node (CPU, 256 GB RAM):
 
-# Load configuration
-config = load_config("configs/pipeline_config.yaml")
-
-# Download data
-results = download_gse_data(["GSE271107", "GSE106218"])
-
-# Initialize storage manager
-sm = StorageManager(root_dir="./data")
-
-# List available datasets
-datasets = sm.list_available("raw")
-print(f"Available datasets: {datasets}")
-
-# Read data
-adata = sm.read_raw("GSE271107")
-print(f"Shape: {adata.shape}")
-```
+| Stage | Time | Peak RAM |
+|-------|-----:|--------:|
+| Download (2 datasets) | ~5 min | 8 GB |
+| Preprocess (119k cells) | ~5 min | 16 GB |
+| Integrate (Harmony + scVI 100 epochs) | ~48 min | 21 GB |
+| Annotate (CellTypist) | ~1 min | 12 GB |
+| **Total** | **~60 min** | **21 GB peak** |
 
 ## Data Sources
 
-The pipeline includes data from the following GEO datasets:
+| Dataset | Accession | Cells | Platform | Description |
+|---------|-----------|------:|----------|-------------|
+| MM Longitudinal | GSE271107 | 143,748 | 10x Chromium | Treatment timepoints, 19 samples |
+| MM Atlas | GSE106218 | 488 | Smart-seq2 | Bulk RNA-seq, clinical metadata |
 
-1. **GSE271107**: Multiple Myeloma Longitudinal
-   - Single-cell transcriptomics across treatment timepoints
-   - ~150,000 cells
-   - 10x Genomics platform
+## References
 
-2. **GSE106218**: Multiple Myeloma Atlas
-   - Comprehensive MM single-cell atlas
-   - ~100,000 cells
-   - 10x Genomics platform
-
-## Pipeline Stages
-
-### 1. Data Download
-- Retrieve data from GEO using GEOparse
-- Convert to AnnData format
-- Store in raw layer
-
-### 2. Quality Control
-- Filter cells by gene count, UMI count, mitochondrial percentage
-- Remove low-quality cells
-- Calculate QC metrics
-
-### 3. Preprocessing
-- Log normalization
-- Highly variable gene selection
-- PCA dimensionality reduction
-- Store in standardized layer
-
-### 4. Integration
-- Harmony-based batch effect correction
-- scVI deep learning integration
-- Store in analysis_ready layer
-
-### 5. Annotation
-- CellTypist automated annotation
-- scGPT foundation model annotation
-- Manual annotation support
-
-### 6. Clustering
-- Leiden community detection
-- Resolution parameter optimization
-- UMAP visualization
-
-### 7. Evaluation
-- Clustering quality metrics (silhouette, Davies-Bouldin)
-- Batch correction assessment (kBET, LISI)
-- Annotation accuracy metrics
-
-### 8. Pseudobulk Analysis
-- Aggregate cells by cell type and batch
-- Prepare for downstream DE analysis
-
-## Agentic Tuning
-
-The pipeline includes agentic optimization for automatic hyperparameter tuning:
-
-```yaml
-agentic:
-  enabled: true
-  search_budget: 100  # Total configurations to evaluate
-  editable_surface:   # Parameters to optimize
-    - "qc.max_mito_pct"
-    - "preprocessing.hvg_selection.n_top_genes"
-    - "clustering.leiden.resolution"
-  frozen_modules:     # Fixed/core modules
-    - "download"
-    - "storage"
-  optimization_metric: "silhouette_score"
-  optimization_direction: "maximize"
-```
-
-The agentic system automatically:
-- Samples parameter configurations from editable_surface
-- Runs pipeline with different configurations
-- Tracks metrics across runs
-- Recommends optimal parameter set
-
-## Experiment Tracking
-
-### MLflow
-
-```bash
-# View MLflow UI
-mlflow ui --backend-store-uri file:./mlruns
-```
-
-Automatically logs:
-- Pipeline parameters
-- Quality metrics
-- Cell counts and statistics
-- Clustering metrics
-- Annotation results
-
-### Weights & Biases
-
-Enable in `configs/pipeline_config.yaml`:
-```yaml
-wandb:
-  enabled: true
-  project: "r3-mm-pipeline"
-  entity: "your-username"
-```
-
-## Testing
-
-Run the test suite:
-
-```bash
-# Run all tests
-pytest
-
-# Run specific test file
-pytest tests/test_config.py -v
-
-# With coverage report
-pytest --cov=src --cov-report=html
-```
-
-## HPC Execution
-
-### SLURM Cluster
-
-```bash
-# Submit Nextflow job to SLURM
-nextflow run workflows/main.nf \
-  -profile hpc \
-  --config configs/pipeline_config.yaml \
-  -with-trace execution_trace.txt
-```
-
-Configuration in `configs/nextflow.config`:
-```groovy
-process {
-    executor = 'slurm'
-    queue = 'normal'
-    cpus = 16
-    memory = '64 GB'
-}
-```
-
-### Distributed Computing with Ray
-
-```python
-import ray
-from src.agentic import AgenticTuner
-
-ray.init()
-tuner = AgenticTuner(config)
-results = tuner.optimize()
-ray.shutdown()
-```
-
-## Performance Benchmarks
-
-Typical runtimes on modern hardware:
-
-| Stage | Time | Cores | RAM |
-|-------|------|-------|-----|
-| Download | 5-10 min | 4 | 8 GB |
-| QC | 10-20 min | 8 | 16 GB |
-| Integration | 30-60 min | 16 | 32 GB |
-| Annotation | 20-40 min | 16 | 32 GB |
-| Evaluation | 10-20 min | 8 | 16 GB |
-| **Total** | **1.5-3 hrs** | - | - |
-
-## Troubleshooting
-
-### Memory Issues
-- Reduce batch size in config: `compute.batch_size: 16`
-- Use distributed computing with Dask/Ray
-- Process datasets separately
-
-### CUDA Out of Memory
-- Disable GPU: Set `compute.gpu_enabled: false`
-- Reduce batch size
-- Use CPU-only libraries
-
-### Download Failures
-- Check NCBI API key in environment: `export NCBI_API_KEY=your_key`
-- Verify internet connection
-- Increase retry attempts: `data_sources.download.retry_attempts: 5`
+- **Scanpy**: Wolf et al. (2018) - Single-cell analysis in Python
+- **Harmony**: Korsunsky et al. (2019) - Fast, sensitive, and accurate integration
+- **scVI**: Lopez et al. (2018) - Deep generative modeling of scRNA-seq data
+- **CellTypist**: Dominguez Conde et al. (2022) - Automated cell type annotation
+- **scGPT**: Cui et al. (2024) - Foundation model for single-cell biology
 
 ## Citation
-
-If you use this pipeline, please cite:
 
 ```bibtex
 @software{r3_mm_pipeline_2026,
   title={R3-MM Pipeline: Multiple Myeloma Single-Cell Computational Biology},
   author={Jagathpally, Abhignya},
   year={2026},
-  url={https://github.com/abhignya-j/r3-mm-pipeline}
+  url={https://github.com/Abhignya-Jagathpally/r3}
 }
 ```
 
 ## License
 
-MIT License - see LICENSE file for details
-
-## Contributing
-
-Contributions are welcome! Please:
-1. Fork the repository
-2. Create a feature branch
-3. Commit changes with clear messages
-4. Submit a pull request
-
-## Contact
-
-- Author: Abhignya Jagathpally
-- Email: abhignya.j@gmail.com
-- GitHub: [@abhignya-j](https://github.com/abhignya-j)
-
-## References
-
-Key papers and tools used in this pipeline:
-
-- **Scanpy**: Wolf et al. (2018) - Single-cell analysis in Python
-- **Harmony**: Korsunsky et al. (2019) - Fast, sensitive, and accurate integration
-- **scVI**: Lopez et al. (2018) - Deep generative modeling of scRNA-seq data
-- **CellTypist**: Domínguez Conde et al. (2022) - Automated cell type annotation
-- **scGPT**: Hao et al. (2023) - Generative pre-training for single-cell data
-
-## Acknowledgments
-
-This pipeline builds upon the excellent work of the computational biology and bioinformatics communities, including the developers of Scanpy, AnnData, and the numerous single-cell analysis tools it integrates.
+MIT License - see LICENSE file for details.
 
 ---
 

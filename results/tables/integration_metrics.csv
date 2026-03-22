@@ -1,0 +1,4 @@
+,Bio Silhouette,Batch Silhouette,Graph Connectivity,Batch Entropy (norm)
+PCA,0.164,0.0108,0.9009,0.0005
+Harmony,0.1467,0.0668,0.9022,0.0054
+scVI,0.0853,0.5178,0.8789,0.001

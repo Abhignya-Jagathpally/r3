@@ -1,0 +1,24 @@
+cell_type,n_cells,fraction
+Classical monocytes,23613,19.75
+T_cell,23397,19.56
+Late erythroid,13384,11.19
+Mid erythroid,13009,10.88
+NK_cell,11103,9.28
+B_cell,10068,8.42
+CD16+ NK cells,5503,4.6
+PC,5110,4.27
+HSC/MPP,2831,2.37
+Tcm/Naive helper T cells,2628,2.2
+Unknown,2086,1.74
+Monocyte,1613,1.35
+DC2,1426,1.19
+Non-classical monocytes,1419,1.19
+Plasma cells,1003,0.84
+Megakaryocytes/platelets,406,0.34
+CD16- NK cells,403,0.34
+Tem/Trm cytotoxic T cells,263,0.22
+Macrophage,158,0.13
+Naive B cells,93,0.08
+Fibroblast,61,0.05
+Tem/Temra cytotoxic T cells,6,0.01
+Small pre-B cells,4,0.0
