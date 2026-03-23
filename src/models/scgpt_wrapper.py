@@ -12,6 +12,7 @@ References:
 
 import logging
 import os
+import warnings
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Union
 
@@ -24,6 +25,12 @@ from anndata import AnnData
 from pydantic import BaseModel, Field, validator
 
 logger = logging.getLogger(__name__)
+
+_MOCK_WARNING = (
+    "scGPT MOCK MODEL ACTIVE: All embeddings are random projections, NOT learned "
+    "representations. Results using this model are NOT scientifically valid. "
+    "Install scgpt (pip install scgpt) and provide pretrained weights to fix this."
+)
 
 
 class ScGPTConfig(BaseModel):
@@ -149,17 +156,19 @@ class ScGPTModel:
                 logger.info(f"Successfully loaded pretrained scGPT model from {checkpoint_path}")
 
         except ImportError:
-            logger.warning(
+            logger.error(
                 "scGPT package is not installed. "
                 "Install with: pip install scgpt. "
                 "Falling back to mock model."
             )
+            warnings.warn(_MOCK_WARNING, RuntimeWarning, stacklevel=2)
             self._initialize_mock_model()
         except Exception as e:
-            logger.warning(
+            logger.error(
                 f"Failed to load scGPT checkpoint: {e}. "
                 "Falling back to mock model."
             )
+            warnings.warn(_MOCK_WARNING, RuntimeWarning, stacklevel=2)
             self._initialize_mock_model()
 
     def _initialize_mock_model(self) -> None:
@@ -173,9 +182,7 @@ class ScGPTModel:
         )
         self.model = self.model.to(self.config.device)
         self.is_mock = True
-        logger.warning(
-            "WARNING: Using mock model — results are not from pretrained scGPT"
-        )
+        logger.error(_MOCK_WARNING)
 
     def preprocess_for_scgpt(
         self, adata: AnnData, use_raw: bool = True

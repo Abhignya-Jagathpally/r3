@@ -206,28 +206,24 @@ class AmbientRNACorrector:
         except ImportError:
             raise ImportError("scipy is required for ambient RNA correction")
 
-        if issparse(X):
-            X_dense = X.toarray()
-        else:
-            X_dense = np.array(X)
+        is_sparse = issparse(X)
 
         # Simplified DecontX implementation
-        # Estimate background distribution from low-expressing genes
-        mean_expression = X_dense.mean(axis=0)
+        # Estimate background distribution from low-expressing genes (sparse-safe)
+        mean_expression = np.asarray(X.mean(axis=0)).flatten()
         background_genes = mean_expression < np.percentile(mean_expression, 25)
+        bg_indices = np.where(background_genes)[0]
 
-        background_profile = X_dense[:, background_genes].mean(axis=1)
-        background_profile = background_profile / background_profile.sum()
+        # Compute cell-level statistics without full dense conversion
+        cell_totals = np.asarray(X.sum(axis=1)).flatten()
+        X_bg = X[:, bg_indices]
+        background_content = np.asarray(X_bg.sum(axis=1)).flatten()
 
-        # Estimate contamination per cell (vectorized)
-        cell_totals = X_dense.sum(axis=1)
-        # Vectorized computation of background content per cell
-        background_content = X_dense[:, background_genes].sum(axis=1)
         contamination_scores = np.divide(
             background_content,
             cell_totals,
             where=(cell_totals > 0),
-            out=np.zeros_like(background_content, dtype=float)
+            out=np.zeros_like(background_content, dtype=float),
         )
 
         # Convert to decontamination probability
@@ -236,19 +232,24 @@ class AmbientRNACorrector:
         adata.obs["decontx_decontamination_prob"] = decontamination_prob
         adata.obs["decontx_contamination_score"] = contamination_scores
 
-        # Apply correction: scale down low-confidence genes (vectorized)
-        corrected_X = X_dense.copy()
-        # Broadcast: (n_obs, 1) * (n_background_genes,) = (n_obs, n_background_genes)
-        corrected_X[:, background_genes] = (
-            corrected_X[:, background_genes] * decontamination_prob[:, np.newaxis]
-        )
+        # Apply correction: scale down background genes only
+        if is_sparse:
+            from scipy.sparse import csr_matrix, diags
 
-        # Update expression matrix
-        if issparse(adata.X):
-            from scipy.sparse import csr_matrix
+            # Only densify the background-gene columns, correct, then reassemble
+            X_bg_dense = np.asarray(X_bg.todense())
+            X_bg_corrected = X_bg_dense * decontamination_prob[:, np.newaxis]
+
+            # Reconstruct: copy sparse matrix, overwrite background columns
+            corrected_X = X.copy().tolil()
+            corrected_X[:, bg_indices] = X_bg_corrected
             adata.X = csr_matrix(corrected_X)
         else:
-            adata.X = corrected_X
+            X_arr = np.array(X)
+            X_arr[:, background_genes] = (
+                X_arr[:, background_genes] * decontamination_prob[:, np.newaxis]
+            )
+            adata.X = X_arr
 
         mean_contamination = contamination_scores.mean()
         logger.info(f"Estimated mean contamination score: {mean_contamination:.4f}")

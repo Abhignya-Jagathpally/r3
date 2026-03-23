@@ -309,12 +309,21 @@ class AutoResearchAgent:
         output_path = Path(output_dir)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        if self.result and self.result.best_config:
+        best_config = self.tracker.best_config
+        if best_config:
             with open(output_path / "best_config.json", "w") as f:
-                json.dump(self.result.best_config, f, indent=2)
-            logger.info(f"Saved best config to {output_path / 'best_config.json'}")
+                # Convert numpy/non-serializable types to native Python
+                serializable = {
+                    k: v.item() if hasattr(v, "item") else v
+                    for k, v in best_config.items()
+                }
+                json.dump(serializable, f, indent=2)
+            logger.info(
+                f"Saved best config (metric={self.tracker.best_metric:.4f}) "
+                f"to {output_path / 'best_config.json'}"
+            )
         else:
-            logger.warning("No best config available to save")
+            logger.warning("No best config available to save — has run() been called?")
 
     def get_results(self) -> Dict:
         """Get summary of results.
