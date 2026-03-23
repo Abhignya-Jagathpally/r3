@@ -183,7 +183,11 @@ class MultimodalFuser:
         self, embeddings_dict: Dict[str, np.ndarray], y: np.ndarray, n_epochs: int = 100, lr: float = 0.01
     ) -> Dict:
         """
-        Fit MoE gating weights via gradient descent to optimize for labels.
+        Fit MoE gating weights via PyTorch autograd backpropagation.
+
+        Uses a differentiable pipeline: gating network → softmax → weighted fusion
+        → linear classifier → cross-entropy loss, with true gradient descent through
+        all parameters jointly.
 
         Args:
             embeddings_dict: Dictionary of modality -> embeddings.
@@ -192,7 +196,7 @@ class MultimodalFuser:
             lr: Learning rate. Default: 0.01.
 
         Returns:
-            Training history dictionary.
+            Training history dictionary with per-epoch loss and accuracy.
 
         Raises:
             ValueError: If embeddings_dict is empty or y shape mismatch.
@@ -221,78 +225,86 @@ class MultimodalFuser:
                 padding = np.zeros((emb.shape[0], embedding_dim - emb.shape[1]))
                 embeddings_list[i] = np.concatenate([emb, padding], axis=1)
 
-        # Gating network: input is concatenation of all modalities
-        X_concat = np.concatenate(embeddings_list, axis=1)
-
-        # Initialize gating weights
-        gate_input_dim = X_concat.shape[1]
-        gate_hidden_dim = max(64, gate_input_dim // 4)
         n_classes = len(np.unique(y))
 
-        self.weights = {
-            "gate_w1": np.random.randn(gate_input_dim, gate_hidden_dim) * 0.01,
-            "gate_b1": np.zeros(gate_hidden_dim),
-            "gate_w2": np.random.randn(gate_hidden_dim, n_modalities) * 0.01,
-            "gate_b2": np.zeros(n_modalities),
-        }
+        # Convert to tensors for autograd
+        expert_tensors = [
+            torch.tensor(e, dtype=torch.float32) for e in embeddings_list
+        ]
+        # Stack experts: (n_samples, n_modalities, embedding_dim)
+        experts_stacked = torch.stack(expert_tensors, dim=1)
+        X_concat_t = torch.cat(expert_tensors, dim=1)  # (n_samples, total_dim)
+        y_t = torch.tensor(y, dtype=torch.long)
 
-        history = {"loss": []}
+        # Build differentiable gating + classifier network
+        gate_input_dim = X_concat_t.shape[1]
+        gate_hidden_dim = max(64, gate_input_dim // 4)
 
-        # Training loop
+        gating_net = nn.Sequential(
+            nn.Linear(gate_input_dim, gate_hidden_dim),
+            nn.ReLU(),
+            nn.Linear(gate_hidden_dim, n_modalities),
+        )
+        classifier_head = nn.Linear(embedding_dim, n_classes)
+
+        optimizer = torch.optim.Adam(
+            list(gating_net.parameters()) + list(classifier_head.parameters()), lr=lr
+        )
+        criterion = nn.CrossEntropyLoss()
+
+        history = {"loss": [], "accuracy": []}
+
         for epoch in range(n_epochs):
-            # Forward pass
-            h = np.dot(X_concat, self.weights["gate_w1"]) + self.weights["gate_b1"]
-            h = np.maximum(h, 0)  # ReLU
-            gate_scores = np.dot(h, self.weights["gate_w2"]) + self.weights["gate_b2"]
+            optimizer.zero_grad()
 
-            # Softmax over experts
-            gate_scores = gate_scores - gate_scores.max(axis=1, keepdims=True)
-            gate_weights = np.exp(gate_scores) / np.exp(gate_scores).sum(axis=1, keepdims=True)
+            # Gating: compute per-sample expert weights
+            gate_logits = gating_net(X_concat_t)  # (n_samples, n_modalities)
+            gate_weights = torch.softmax(gate_logits, dim=1)  # (n_samples, n_modalities)
 
-            # Weighted average of experts
-            fused = np.zeros((n_samples, embedding_dim))
-            for i in range(n_modalities):
-                fused += gate_weights[:, i : i + 1] * embeddings_list[i]
+            # Fuse: weighted sum of expert embeddings
+            # gate_weights: (n, m) -> (n, m, 1), experts_stacked: (n, m, d)
+            fused = (gate_weights.unsqueeze(2) * experts_stacked).sum(dim=1)  # (n, d)
 
-            # Compute classification loss via LogisticRegression on fused output
-            clf = LogisticRegression(max_iter=100, random_state=42)
-            clf.fit(fused, y)
-            loss = -clf.score(fused, y)
-            history["loss"].append(loss)
+            # Classify on fused representation
+            logits = classifier_head(fused)  # (n, n_classes)
+            loss = criterion(logits, y_t)
 
-            # Backpropagate to gating weights via finite differences
-            lr = 0.01
-            eps = 1e-5
-            for key in ["gate_w1", "gate_b1", "gate_w2", "gate_b2"]:
-                grad = np.zeros_like(self.weights[key])
-                it = np.nditer(self.weights[key], flags=["multi_index"])
-                # Sample a subset of indices for efficiency
-                flat_size = self.weights[key].size
-                sample_size = min(flat_size, max(50, flat_size // 10))
-                sample_indices = np.random.choice(flat_size, sample_size, replace=False)
-                for idx in sample_indices:
-                    multi_idx = np.unravel_index(idx, self.weights[key].shape)
-                    old_val = self.weights[key][multi_idx]
-                    # Perturb +eps
-                    self.weights[key][multi_idx] = old_val + eps
-                    h_p = np.maximum(np.dot(X_concat, self.weights["gate_w1"]) + self.weights["gate_b1"], 0)
-                    gs_p = np.dot(h_p, self.weights["gate_w2"]) + self.weights["gate_b2"]
-                    gs_p = gs_p - gs_p.max(axis=1, keepdims=True)
-                    gw_p = np.exp(gs_p) / np.exp(gs_p).sum(axis=1, keepdims=True)
-                    fused_p = sum(gw_p[:, i:i+1] * embeddings_list[i] for i in range(n_modalities))
-                    clf_p = LogisticRegression(max_iter=100, random_state=42)
-                    clf_p.fit(fused_p, y)
-                    loss_p = -clf_p.score(fused_p, y)
-                    # Restore
-                    self.weights[key][multi_idx] = old_val
-                    grad[multi_idx] = (loss_p - loss) / eps
-                self.weights[key] -= lr * grad
+            # True backpropagation through gating + classifier
+            loss.backward()
+            optimizer.step()
+
+            with torch.no_grad():
+                preds = logits.argmax(dim=1)
+                acc = (preds == y_t).float().mean().item()
+
+            history["loss"].append(loss.item())
+            history["accuracy"].append(acc)
 
             if (epoch + 1) % max(1, n_epochs // 10) == 0:
-                logger.debug(f"MoE fit epoch {epoch + 1}/{n_epochs}: loss={loss:.4f}")
+                logger.debug(
+                    f"MoE fit epoch {epoch + 1}/{n_epochs}: "
+                    f"loss={loss.item():.4f}, acc={acc:.4f}"
+                )
 
+        # Extract learned weights back to numpy for inference
+        with torch.no_grad():
+            self.weights = {
+                "gate_w1": gating_net[0].weight.T.numpy().copy(),
+                "gate_b1": gating_net[0].bias.numpy().copy(),
+                "gate_w2": gating_net[2].weight.T.numpy().copy(),
+                "gate_b2": gating_net[2].bias.numpy().copy(),
+            }
+
+        # Store classifier for optional direct prediction
+        self._classifier_head = classifier_head
         self._moe_fitted = True
-        logger.info(f"Fit MoE gating weights in {n_epochs} epochs")
+
+        final_loss = history["loss"][-1]
+        final_acc = history["accuracy"][-1]
+        logger.info(
+            f"Fit MoE gating weights in {n_epochs} epochs: "
+            f"final_loss={final_loss:.4f}, final_acc={final_acc:.4f}"
+        )
         return history
 
     def _moe_fusion(self, embeddings_dict: Dict[str, np.ndarray]) -> np.ndarray:
