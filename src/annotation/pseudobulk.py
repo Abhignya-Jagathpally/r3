@@ -135,7 +135,7 @@ class PseudobulkAggregator:
             if sparse.issparse(X):
                 group_counts = np.asarray(X[indices].sum(axis=0)).flatten()
             else:
-                group_counts = X[indices].sum(axis=0)
+                group_counts = np.asarray(X[indices].sum(axis=0)).flatten()
 
             agg_matrix.append(group_counts)
             group_info.append({
@@ -234,7 +234,7 @@ class PseudobulkAggregator:
             if sparse.issparse(X):
                 group_counts = np.asarray(X[indices].sum(axis=0)).flatten()
             else:
-                group_counts = X[indices].sum(axis=0)
+                group_counts = np.asarray(X[indices].sum(axis=0)).flatten()
 
             agg_matrix.append(group_counts)
             group_info.append({
@@ -294,22 +294,33 @@ class PseudobulkAggregator:
 
         self.logger.info(f"Exporting pseudobulk to {output_path}...")
 
-        # Create DataFrame with genes as columns
-        df = pd.DataFrame(
-            pseudobulk_adata.X,
-            index=pseudobulk_adata.obs.index,
-            columns=pseudobulk_adata.var_names,
-        )
+        import pyarrow as pa
+        import pyarrow.parquet as pq
 
-        # Add cell counts if requested
-        if include_cell_counts and "n_cells" in pseudobulk_adata.obs.columns:
-            df.insert(0, "n_cells", pseudobulk_adata.obs["n_cells"].values)
+        chunk_size = 1000
+        writer = None
+        total_rows = 0
 
-        # Write parquet
-        df.to_parquet(output_path, engine="pyarrow")
+        for start in range(0, pseudobulk_adata.n_obs, chunk_size):
+            end = min(start + chunk_size, pseudobulk_adata.n_obs)
+            chunk = pseudobulk_adata[start:end]
+            X = chunk.X.toarray() if hasattr(chunk.X, "toarray") else chunk.X
+            df = pd.DataFrame(X, columns=pseudobulk_adata.var_names)
+
+            if include_cell_counts and "n_cells" in pseudobulk_adata.obs.columns:
+                df.insert(0, "n_cells", pseudobulk_adata.obs["n_cells"].values[start:end])
+
+            table = pa.Table.from_pandas(df)
+            if writer is None:
+                writer = pq.ParquetWriter(str(output_path), table.schema)
+            writer.write_table(table)
+            total_rows += end - start
+
+        if writer:
+            writer.close()
 
         self.logger.info(
-            f"Exported {df.shape[0]} samples × {df.shape[1]} features"
+            f"Exported {total_rows} samples × {pseudobulk_adata.n_vars} features"
         )
 
     def compute_cell_fractions(

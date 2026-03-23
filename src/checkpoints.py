@@ -384,7 +384,7 @@ class CheckpointManager:
             raise FileNotFoundError(f"No manifest found for run: {run_id}")
 
         with open(manifest_path) as f:
-            manifest_dict = yaml.full_load(f)
+            manifest_dict = yaml.safe_load(f)
 
         mgr = cls.__new__(cls)
         mgr.checkpoints_dir = Path(checkpoints_dir)

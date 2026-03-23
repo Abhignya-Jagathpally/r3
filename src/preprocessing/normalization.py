@@ -240,9 +240,13 @@ class Normalizer:
         expected = np.outer(size_factors, gene_means)
 
         # 4. Compute variance (with overdispersion)
-        # Var = mu + mu^2 / theta, where theta is dispersion parameter
-        # Simplified: use Poisson variance with small offset
-        variance = expected + (expected ** 2) / 1000.0
+        # Var = mu + mu^2 / theta, where theta is NB dispersion parameter
+        # Estimate gene-wise dispersion via method of moments
+        gene_vars = np.asarray(X.var(axis=0)).flatten()
+        gene_means_flat = np.asarray(gene_means).flatten()
+        theta = gene_means_flat**2 / np.maximum(gene_vars - gene_means_flat, 1e-6)
+        theta = np.clip(theta, 1e-6, 1e6)
+        variance = expected + (expected ** 2) / theta[np.newaxis, :]
         variance = np.maximum(variance, 0.1)  # Prevent division by zero
 
         # 5. Compute residuals

@@ -2,6 +2,92 @@
 
 A comprehensive pipeline for analyzing single-cell RNA-seq data from Multiple Myeloma (MM) patient samples. Integrates preprocessing, batch correction, cell type annotation, classical ML benchmarks, and pseudobulk aggregation with full CLI orchestration.
 
+## Pipeline Architecture
+
+```mermaid
+flowchart TD
+    subgraph INPUT["Data Ingestion"]
+        GEO[(GEO Database<br/>GSE271107 · GSE106218)]
+        DL[Download<br/><i>GEOparse · 10x h5</i>]
+        GEO --> DL
+    end
+
+    subgraph PREPROCESS["Preprocessing"]
+        QC[Quality Control<br/><i>min genes · max mito%</i>]
+        AMB[Ambient RNA Removal<br/><i>SoupX · DecontX</i>]
+        DBL[Doublet Detection<br/><i>Scrublet</i>]
+        NORM[Normalization & HVG<br/><i>log-norm · Pearson residuals</i>]
+        QC --> AMB --> DBL --> NORM
+    end
+
+    subgraph INTEGRATE["Integration & Clustering"]
+        HAR[Harmony]
+        SCVI[scVI / scANVI]
+        CLUST[Leiden Clustering<br/><i>+ UMAP embedding</i>]
+        HAR --> CLUST
+        SCVI --> CLUST
+    end
+
+    subgraph ANNOTATE["Cell Type Annotation"]
+        CT[CellTypist<br/><i>Immune_All_Low</i>]
+        MK[Marker-Based<br/><i>gene scoring</i>]
+        CON[Consensus Voting]
+        CT --> CON
+        MK --> CON
+    end
+
+    subgraph AGGREGATE["Pseudobulk Aggregation"]
+        PB[Patient × Cell Type<br/><i>sparse-aware sum</i>]
+        PQ[Parquet Export<br/><i>chunked writer</i>]
+        PB --> PQ
+    end
+
+    subgraph MODEL["Modeling & Evaluation"]
+        LR[Logistic Regression]
+        RF[Random Forest]
+        SVM[Linear SVM]
+        GPT[scGPT<br/><i>foundation model</i>]
+        MOE[MoE Fusion<br/><i>gated experts</i>]
+        EVAL[Evaluation<br/><i>ARI · NMI · silhouette<br/>bootstrap CI · Wilcoxon</i>]
+        LR --> EVAL
+        RF --> EVAL
+        SVM --> EVAL
+        GPT --> MOE --> EVAL
+    end
+
+    subgraph AGENTIC["Agentic Tuning"]
+        SEARCH[Hyperparameter Search<br/><i>Ray Tune · Dask</i>]
+        CONTRACT[Contract Enforcer<br/><i>frozen preprocessing</i>]
+        REPORT[Report Generator]
+        CONTRACT --> SEARCH --> REPORT
+    end
+
+    DL --> QC
+    NORM --> HAR & SCVI
+    CLUST --> CT & MK
+    CON --> PB
+    CON --> LR & RF & SVM & GPT
+    EVAL --> SEARCH
+
+    subgraph ORCHESTRATION["Orchestration"]
+        direction LR
+        CLI["CLI<br/><code>python -m src</code>"]
+        SNK[Snakemake]
+        NF[Nextflow]
+        DOCK[Docker / Apptainer]
+        MLF[MLflow / W&B]
+    end
+
+    style INPUT fill:#e8f4f8,stroke:#2196F3
+    style PREPROCESS fill:#fff3e0,stroke:#FF9800
+    style INTEGRATE fill:#e8f5e9,stroke:#4CAF50
+    style ANNOTATE fill:#f3e5f5,stroke:#9C27B0
+    style AGGREGATE fill:#fce4ec,stroke:#E91E63
+    style MODEL fill:#e3f2fd,stroke:#1565C0
+    style AGENTIC fill:#fff8e1,stroke:#F9A825
+    style ORCHESTRATION fill:#f5f5f5,stroke:#616161
+```
+
 ## Results
 
 ### Dataset Summary

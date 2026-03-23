@@ -549,12 +549,14 @@ class BenchmarkSuite:
             if mask.sum() > 0:
                 try:
                     results["ari"] = compute_ari(y_true[mask], y_pred[mask])
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"ARI computation failed: {e}")
+                    results["ari"] = float("nan")
                 try:
                     results["nmi"] = compute_nmi(y_true[mask], y_pred[mask])
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"NMI computation failed: {e}")
+                    results["nmi"] = float("nan")
                 try:
                     from sklearn.metrics import f1_score, balanced_accuracy_score
                     results["f1_weighted"] = float(
@@ -563,8 +565,10 @@ class BenchmarkSuite:
                     results["balanced_accuracy"] = float(
                         balanced_accuracy_score(y_true[mask], y_pred[mask])
                     )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.warning(f"F1/balanced accuracy computation failed: {e}")
+                    results["f1_weighted"] = float("nan")
+                    results["balanced_accuracy"] = float("nan")
 
         # Integration metrics
         if embed_key in adata.obsm:

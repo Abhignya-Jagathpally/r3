@@ -120,7 +120,7 @@ def stage_download(config, checkpoint_mgr, storage_mgr):
 
     meta = checkpoint_mgr.start_stage(
         "download",
-        ad.AnnData(np.zeros((1, 1))),  # Placeholder for pre-download
+        ad.AnnData(np.zeros((0, 0))),  # Empty placeholder for pre-download
         params={"datasets": [d.accession for d in config.data_sources.datasets]},
     )
 
@@ -162,7 +162,8 @@ def stage_download(config, checkpoint_mgr, storage_mgr):
             merged = all_adatas[0]
         else:
             # Find common genes for concatenation
-            merged = ad.concat(all_adatas, join="outer", label="dataset_source")
+            dataset_names = [d.accession for d in config.data_sources.datasets]
+            merged = ad.concat(all_adatas, join="outer", keys=dataset_names, label="dataset_source")
             logger.info(f"Merged {len(all_adatas)} datasets: {merged.shape}")
 
         # Store raw counts
@@ -864,9 +865,11 @@ def run_pipeline(
     if start_stage:
         idx = stages_to_run.index(start_stage)
         stages_to_run = stages_to_run[idx:]
-    if end_stage:
+    if end_stage and end_stage in stages_to_run:
         idx = stages_to_run.index(end_stage)
         stages_to_run = stages_to_run[: idx + 1]
+    elif end_stage:
+        logger.warning(f"Unknown end stage '{end_stage}', running all stages")
 
     logger.info(f"Stages to run: {stages_to_run}")
     logger.info(f"Already completed: {completed}")

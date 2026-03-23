@@ -254,11 +254,39 @@ class MultimodalFuser:
             for i in range(n_modalities):
                 fused += gate_weights[:, i : i + 1] * embeddings_list[i]
 
-            # Simple classifier on fused features for loss computation
+            # Compute classification loss via LogisticRegression on fused output
             clf = LogisticRegression(max_iter=100, random_state=42)
             clf.fit(fused, y)
             loss = -clf.score(fused, y)
             history["loss"].append(loss)
+
+            # Backpropagate to gating weights via finite differences
+            lr = 0.01
+            eps = 1e-5
+            for key in ["gate_w1", "gate_b1", "gate_w2", "gate_b2"]:
+                grad = np.zeros_like(self.weights[key])
+                it = np.nditer(self.weights[key], flags=["multi_index"])
+                # Sample a subset of indices for efficiency
+                flat_size = self.weights[key].size
+                sample_size = min(flat_size, max(50, flat_size // 10))
+                sample_indices = np.random.choice(flat_size, sample_size, replace=False)
+                for idx in sample_indices:
+                    multi_idx = np.unravel_index(idx, self.weights[key].shape)
+                    old_val = self.weights[key][multi_idx]
+                    # Perturb +eps
+                    self.weights[key][multi_idx] = old_val + eps
+                    h_p = np.maximum(np.dot(X_concat, self.weights["gate_w1"]) + self.weights["gate_b1"], 0)
+                    gs_p = np.dot(h_p, self.weights["gate_w2"]) + self.weights["gate_b2"]
+                    gs_p = gs_p - gs_p.max(axis=1, keepdims=True)
+                    gw_p = np.exp(gs_p) / np.exp(gs_p).sum(axis=1, keepdims=True)
+                    fused_p = sum(gw_p[:, i:i+1] * embeddings_list[i] for i in range(n_modalities))
+                    clf_p = LogisticRegression(max_iter=100, random_state=42)
+                    clf_p.fit(fused_p, y)
+                    loss_p = -clf_p.score(fused_p, y)
+                    # Restore
+                    self.weights[key][multi_idx] = old_val
+                    grad[multi_idx] = (loss_p - loss) / eps
+                self.weights[key] -= lr * grad
 
             if (epoch + 1) % max(1, n_epochs // 10) == 0:
                 logger.debug(f"MoE fit epoch {epoch + 1}/{n_epochs}: loss={loss:.4f}")

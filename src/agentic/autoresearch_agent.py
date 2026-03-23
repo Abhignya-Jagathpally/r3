@@ -298,21 +298,23 @@ class AutoResearchAgent:
         logger.info(f"Exported experiment log to {output_path}")
 
     def save_best_model(self, output_dir: str) -> None:
-        """Save best model (placeholder for actual model saving).
-
-        This is a template method that should be overridden to save
-        the trained model using the best configuration.
+        """Save best model configuration and results.
 
         Args:
             output_dir: Directory to save model.
-
-        Raises:
-            NotImplementedError: This is a template method.
         """
-        raise NotImplementedError(
-            "Subclasses should implement save_best_model() to save "
-            "the model trained with the best configuration."
-        )
+        from pathlib import Path
+        import json
+
+        output_path = Path(output_dir)
+        output_path.mkdir(parents=True, exist_ok=True)
+
+        if self.result and self.result.best_config:
+            with open(output_path / "best_config.json", "w") as f:
+                json.dump(self.result.best_config, f, indent=2)
+            logger.info(f"Saved best config to {output_path / 'best_config.json'}")
+        else:
+            logger.warning("No best config available to save")
 
     def get_results(self) -> Dict:
         """Get summary of results.

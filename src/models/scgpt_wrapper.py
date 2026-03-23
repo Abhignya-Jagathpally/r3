@@ -251,7 +251,10 @@ class ScGPTModel:
             ValueError: If adata is not preprocessed correctly.
         """
         if self.is_mock:
-            logger.warning("WARNING: Using mock model — results are not from pretrained scGPT")
+            logger.error(
+                "MOCK MODEL ACTIVE — encode() returns random embeddings, not scGPT representations. "
+                "Install scgpt and provide model weights for real results."
+            )
 
         if adata.n_vars != self.config.n_hvg and self._hvg_list is None:
             logger.warning(
@@ -309,7 +312,10 @@ class ScGPTModel:
             ValueError: If task is unsupported.
         """
         if self.is_mock:
-            logger.warning("WARNING: Using mock model — results are not from pretrained scGPT")
+            logger.error(
+                "MOCK MODEL ACTIVE — fine_tune() uses random weights, not scGPT representations. "
+                "Install scgpt and provide model weights for real results."
+            )
 
         if labels_key not in adata.obs:
             raise ValueError(f"Label key '{labels_key}' not found in adata.obs")
